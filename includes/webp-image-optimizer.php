@@ -48,6 +48,10 @@ class SNN_WebP_Image_Optimizer {
         add_filter('the_content', array($this, 'replace_content_images'));
         add_action('wp_head', array($this, 'preload_critical_images'));
         
+        // Automatic WebP serving
+        add_action('template_redirect', array($this, 'serve_webp_images'));
+        add_filter('wp_get_attachment_url', array($this, 'replace_attachment_url_with_webp'), 10, 2);
+        
         // Admin hooks
         add_action('admin_init', array($this, 'register_settings'));
         add_action('wp_ajax_snn_convert_images', array($this, 'convert_images_ajax'));
@@ -97,16 +101,46 @@ class SNN_WebP_Image_Optimizer {
     }
     
     /**
-     * Convert attachment image to WebP
+     * Convert attachment image to WebP (ALL SIZES)
      */
     public function convert_attachment_image($attachment_id) {
         if (!($this->options['enable_webp'] ?? true)) {
             return;
         }
         
+        // Convert original image
         $file_path = get_attached_file($attachment_id);
         if ($file_path && file_exists($file_path)) {
             $this->convert_image_to_webp($file_path);
+        }
+        
+        // Convert all image sizes if enabled
+        if ($this->options['convert_all_sizes'] ?? true) {
+            $this->convert_all_image_sizes($attachment_id);
+        }
+    }
+    
+    /**
+     * Convert all image sizes to WebP
+     */
+    private function convert_all_image_sizes($attachment_id) {
+        $metadata = wp_get_attachment_metadata($attachment_id);
+        
+        if (!$metadata || !isset($metadata['sizes'])) {
+            return;
+        }
+        
+        $upload_dir = wp_upload_dir();
+        $file_info = pathinfo($metadata['file']);
+        $base_dir = $upload_dir['basedir'] . '/' . $file_info['dirname'];
+        
+        // Convert each size
+        foreach ($metadata['sizes'] as $size_name => $size_data) {
+            $size_file_path = $base_dir . '/' . $size_data['file'];
+            
+            if (file_exists($size_file_path)) {
+                $this->convert_image_to_webp($size_file_path);
+            }
         }
     }
     
@@ -226,20 +260,28 @@ class SNN_WebP_Image_Optimizer {
     }
     
     /**
-     * Replace images in content with WebP versions
+     * Replace images in content with WebP versions (Enhanced)
      */
     public function replace_content_images($content) {
         if (!($this->options['enable_webp'] ?? true)) {
             return $content;
         }
         
-        // Find all img tags
+        // Find all img tags with src attributes
         preg_match_all('/<img[^>]+src="([^"]+)"[^>]*>/i', $content, $matches);
         
         foreach ($matches[1] as $index => $image_url) {
             $webp_url = $this->get_webp_url($image_url);
             if ($webp_url) {
+                // Replace the src attribute
                 $content = str_replace($image_url, $webp_url, $content);
+                
+                // Also replace in srcset if present
+                $content = preg_replace(
+                    '/srcset="([^"]*' . preg_quote($image_url, '/') . '[^"]*)"/i',
+                    'srcset="$1"',
+                    $content
+                );
             }
         }
         
@@ -356,6 +398,78 @@ class SNN_WebP_Image_Optimizer {
     }
     
     /**
+     * Serve WebP images automatically
+     */
+    public function serve_webp_images() {
+        // Only serve WebP for image requests
+        if (!isset($_SERVER['REQUEST_URI'])) {
+            return;
+        }
+        
+        $request_uri = $_SERVER['REQUEST_URI'];
+        
+        // Check if it's an image request
+        if (!preg_match('/\.(jpg|jpeg|png)$/i', $request_uri)) {
+            return;
+        }
+        
+        // Check if WebP version exists
+        $webp_uri = preg_replace('/\.(jpg|jpeg|png)$/i', '.webp', $request_uri);
+        $webp_path = ABSPATH . ltrim($webp_uri, '/');
+        
+        if (file_exists($webp_path)) {
+            // Serve WebP with proper headers
+            header('Content-Type: image/webp');
+            header('Content-Length: ' . filesize($webp_path));
+            header('Cache-Control: public, max-age=31536000');
+            
+            readfile($webp_path);
+            exit;
+        }
+    }
+    
+    /**
+     * Replace attachment URL with WebP version
+     */
+    public function replace_attachment_url_with_webp($url, $attachment_id) {
+        if (!($this->options['enable_webp'] ?? true)) {
+            return $url;
+        }
+        
+        // Check if WebP version exists
+        $webp_url = $this->get_webp_url($url);
+        if ($webp_url) {
+            return $webp_url;
+        }
+        
+        return $url;
+    }
+    
+    /**
+     * Enhanced WebP URL detection
+     */
+    private function get_webp_url($image_url) {
+        $upload_url = $this->upload_dir['baseurl'];
+        
+        // Check if image is from uploads directory
+        if (strpos($image_url, $upload_url) !== 0) {
+            return false;
+        }
+        
+        $relative_path = str_replace($upload_url, '', $image_url);
+        $file_info = pathinfo($relative_path);
+        
+        // Check for WebP version
+        $webp_path = $this->webp_dir . $file_info['filename'] . '.webp';
+        
+        if (file_exists($webp_path)) {
+            return $upload_url . '/webp/' . $file_info['filename'] . '.webp';
+        }
+        
+        return false;
+    }
+    
+    /**
      * Get placeholder image
      */
     private function get_placeholder_image($attachment_id) {
@@ -456,6 +570,22 @@ class SNN_WebP_Image_Optimizer {
             'snn-webp-optimization',
             'snn_webp_general'
         );
+        
+        add_settings_field(
+            'convert_all_sizes',
+            __('Convert All Image Sizes', 'snn'),
+            array($this, 'convert_all_sizes_callback'),
+            'snn-webp-optimization',
+            'snn_webp_general'
+        );
+        
+        add_settings_field(
+            'auto_serve_webp',
+            __('Auto-Serve WebP Images', 'snn'),
+            array($this, 'auto_serve_webp_callback'),
+            'snn-webp-optimization',
+            'snn_webp_general'
+        );
     }
     
     /**
@@ -522,6 +652,18 @@ class SNN_WebP_Image_Optimizer {
         echo '<p class="description">' . __('Number of images to process per batch (10-200). Lower values for better performance with thousands of images.', 'snn') . '</p>';
     }
     
+    public function convert_all_sizes_callback() {
+        $enabled = isset($this->options['convert_all_sizes']) ? $this->options['convert_all_sizes'] : true;
+        echo '<input type="checkbox" name="snn_webp_options[convert_all_sizes]" value="1" ' . checked(1, $enabled, false) . ' />';
+        echo '<p class="description">' . __('Convert all WordPress image sizes (thumbnail, medium, large, etc.) to WebP. Recommended for better Core Web Vitals.', 'snn') . '</p>';
+    }
+    
+    public function auto_serve_webp_callback() {
+        $enabled = isset($this->options['auto_serve_webp']) ? $this->options['auto_serve_webp'] : true;
+        echo '<input type="checkbox" name="snn_webp_options[auto_serve_webp]" value="1" ' . checked(1, $enabled, false) . ' />';
+        echo '<p class="description">' . __('Automatically serve WebP images when available. Fixes 404 errors for converted images.', 'snn') . '</p>';
+    }
+    
     /**
      * Sanitize options
      */
@@ -537,6 +679,8 @@ class SNN_WebP_Image_Optimizer {
         $sanitized['enable_placeholder'] = isset($input['enable_placeholder']) ? 1 : 0;
         $sanitized['critical_images'] = sanitize_textarea_field($input['critical_images'] ?? '');
         $sanitized['batch_size'] = intval($input['batch_size'] ?? 50);
+        $sanitized['convert_all_sizes'] = isset($input['convert_all_sizes']) ? 1 : 0;
+        $sanitized['auto_serve_webp'] = isset($input['auto_serve_webp']) ? 1 : 0;
         
         return $sanitized;
     }
@@ -574,6 +718,7 @@ class SNN_WebP_Image_Optimizer {
         $batch_errors = 0;
         
         foreach ($images as $image) {
+            // Convert original image
             $file_path = get_attached_file($image->ID);
             if ($file_path && file_exists($file_path)) {
                 $result = $this->convert_image_to_webp($file_path);
@@ -583,6 +728,9 @@ class SNN_WebP_Image_Optimizer {
                     $batch_errors++;
                 }
             }
+            
+            // Convert all image sizes
+            $this->convert_all_image_sizes($image->ID);
         }
         
         $total_processed += count($images);
@@ -756,6 +904,7 @@ class SNN_WebP_Image_Optimizer {
         $batch_errors = 0;
         
         foreach ($images as $image) {
+            // Convert original image
             $file_path = get_attached_file($image->ID);
             if ($file_path && file_exists($file_path)) {
                 $result = $this->convert_image_to_webp($file_path);
@@ -767,6 +916,9 @@ class SNN_WebP_Image_Optimizer {
                     $batch_errors++;
                 }
             }
+            
+            // Convert all image sizes
+            $this->convert_all_image_sizes($image->ID);
         }
         
         // Update status
