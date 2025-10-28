@@ -12,16 +12,28 @@ define( 'SNN_URL_ASSETS', trailingslashit( SNN_URL . 'assets' ) );
 require_once SNN_PATH . 'includes/settings-page.php';
 
 require_once SNN_PATH . 'includes/other-settings.php';
-require_once SNN_PATH . 'includes/security-page.php';
+
+// Unified Security & Optimization Settings (replaces individual security files)
+require_once SNN_PATH . 'includes/security-optimization.php';
+
+// Head optimization (always active for better Core Web Vitals)
+require_once SNN_PATH . 'includes/head-optimization.php';
+
+// Security migration helper (run once to migrate existing options)
+require_once SNN_PATH . 'includes/security-migration.php';
+
+// Legacy security files (kept for compatibility - functionality moved to security-optimization.php)
+// require_once SNN_PATH . 'includes/security-page.php';
+// require_once SNN_PATH . 'includes/remove-wp-version.php';
+// require_once SNN_PATH . 'includes/disable-xmlrpc.php';
+// require_once SNN_PATH . 'includes/disable-file-editing.php';
+// require_once SNN_PATH . 'includes/remove-rss.php';
+// require_once SNN_PATH . 'includes/disable-wp-json-if-not-logged-in.php';
+
 require_once SNN_PATH . 'includes/post-types-settings.php';
 require_once SNN_PATH . 'includes/custom-field-settings.php';
 require_once SNN_PATH . 'includes/taxonomy-settings.php';
 require_once SNN_PATH . 'includes/login-settings.php';
-require_once SNN_PATH . 'includes/remove-wp-version.php';
-require_once SNN_PATH . 'includes/disable-xmlrpc.php';
-require_once SNN_PATH . 'includes/disable-file-editing.php';
-require_once SNN_PATH . 'includes/remove-rss.php';
-require_once SNN_PATH . 'includes/disable-wp-json-if-not-logged-in.php';
 require_once SNN_PATH . 'includes/login-logo-change-url-change.php';
 require_once SNN_PATH . 'includes/enqueue-scripts.php';
 require_once SNN_PATH . 'includes/file-size-column-media.php';
@@ -31,8 +43,8 @@ require_once SNN_PATH . 'includes/301-redirect.php';
 require_once SNN_PATH . 'includes/smtp-settings.php';
 require_once SNN_PATH . 'includes/mail-logging.php';
 require_once SNN_PATH . 'includes/media-settings.php';
-require_once SNN_PATH . 'includes/disable-emojis.php';
-require_once SNN_PATH . 'includes/disable-gravatar.php';
+// require_once SNN_PATH . 'includes/disable-emojis.php';  // Moved to security-optimization.php
+// require_once SNN_PATH . 'includes/disable-gravatar.php'; // Moved to security-optimization.php
 require_once SNN_PATH . 'includes/editor-settings-bricks.php'; 
 require_once SNN_PATH . 'includes/editor-settings-panel-bricks.php';
 require_once SNN_PATH . 'includes/role-manager.php';

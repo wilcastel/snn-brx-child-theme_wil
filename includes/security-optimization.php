@@ -1,0 +1,763 @@
+<?php
+/**
+ * SNN Security & Optimization Settings
+ * 
+ * Unified security and optimization configuration for SNN-BRX-WIL theme.
+ * Consolidates all security features and prepares structure for new optimizations.
+ * 
+ * @package SNN-BRX-WIL
+ * @since 1.0.0
+ */
+
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+/**
+ * Security & Optimization Settings Class
+ */
+class SNN_Security_Optimization {
+    
+    private $option_name = 'snn_security_optimization_options';
+    private $option_group = 'snn_security_optimization_group';
+    private $page_slug = 'snn-security-optimization';
+    
+    public function __construct() {
+        add_action('admin_menu', array($this, 'add_admin_menu'));
+        add_action('admin_init', array($this, 'register_settings'));
+        add_action('init', array($this, 'apply_security_settings'));
+        add_action('wp_enqueue_scripts', array($this, 'conditional_dashicons'));
+    }
+    
+    /**
+     * Add admin menu page
+     */
+    public function add_admin_menu() {
+        add_submenu_page(
+            'snn-settings',
+            __('Security & Optimization', 'snn'),
+            __('Security & Optimization', 'snn'),
+            'manage_options',
+            $this->page_slug,
+            array($this, 'render_admin_page')
+        );
+    }
+    
+    /**
+     * Register settings and fields
+     */
+    public function register_settings() {
+        // Register the main option
+        register_setting(
+            $this->option_group,
+            $this->option_name,
+            array($this, 'sanitize_options')
+        );
+        
+        // Add sections
+        $this->add_sections();
+        
+        // Add fields
+        $this->add_fields();
+    }
+    
+    /**
+     * Add settings sections
+     */
+    private function add_sections() {
+        $sections = array(
+            'basic_security' => array(
+                'title' => __('Basic Security Settings', 'snn'),
+                'description' => __('Configure fundamental security features.', 'snn')
+            ),
+            'head_cleanup' => array(
+                'title' => __('Advanced Head Cleanup', 'snn'),
+                'description' => __('Remove unnecessary elements from HTML head.', 'snn')
+            ),
+            'loading_optimization' => array(
+                'title' => __('Loading Optimization', 'snn'),
+                'description' => __('Optimize CSS, JS, and font loading for better performance.', 'snn')
+            ),
+            'protocol_settings' => array(
+                'title' => __('Protocol Settings', 'snn'),
+                'description' => __('Configure HTTPS, CORS, and mixed content handling.', 'snn')
+            ),
+            'resource_management' => array(
+                'title' => __('Resource Management', 'snn'),
+                'description' => __('Manage WordPress resources and third-party integrations.', 'snn')
+            )
+        );
+        
+        foreach ($sections as $id => $section) {
+            add_settings_section(
+                $id,
+                $section['title'],
+                function() use ($section) {
+                    echo '<p>' . esc_html($section['description']) . '</p>';
+                },
+                $this->page_slug
+            );
+        }
+    }
+    
+    /**
+     * Add settings fields
+     */
+    private function add_fields() {
+        $fields = $this->get_all_fields();
+        
+        foreach ($fields as $field) {
+            add_settings_field(
+                $field['id'],
+                $field['label'],
+                array($this, 'render_field'),
+                $this->page_slug,
+                $field['section'],
+                array(
+                    'field_id' => $field['id'],
+                    'field_type' => $field['type'],
+                    'description' => $field['description'],
+                    'options' => isset($field['options']) ? $field['options'] : array()
+                )
+            );
+        }
+    }
+    
+    /**
+     * Get all field definitions
+     */
+    private function get_all_fields() {
+        return array(
+            // Basic Security Settings
+            array(
+                'id' => 'disable_xmlrpc',
+                'label' => __('Disable XML-RPC', 'snn'),
+                'type' => 'checkbox',
+                'section' => 'basic_security',
+                'description' => __('Disable XML-RPC functionality in WordPress.', 'snn')
+            ),
+            array(
+                'id' => 'disable_json_api_guests',
+                'label' => __('Disable JSON API for Guests', 'snn'),
+                'type' => 'checkbox',
+                'section' => 'basic_security',
+                'description' => __('Disable JSON API (wp-json) for users who are not logged in.', 'snn')
+            ),
+            array(
+                'id' => 'disable_file_editing',
+                'label' => __('Disable File Editing', 'snn'),
+                'type' => 'checkbox',
+                'section' => 'basic_security',
+                'description' => __('Disable file editing from the WordPress dashboard.', 'snn')
+            ),
+            array(
+                'id' => 'remove_rss_feeds',
+                'label' => __('Remove RSS Feeds', 'snn'),
+                'type' => 'checkbox',
+                'section' => 'basic_security',
+                'description' => __('Remove RSS feed links from your website\'s HTML source code.', 'snn')
+            ),
+            array(
+                'id' => 'hide_wp_version',
+                'label' => __('Hide WP Version', 'snn'),
+                'type' => 'checkbox',
+                'section' => 'basic_security',
+                'description' => __('Remove the WordPress version number from your website\'s HTML source code.', 'snn')
+            ),
+            array(
+                'id' => 'disable_bundled_themes',
+                'label' => __('Disable Bundled Themes', 'snn'),
+                'type' => 'checkbox',
+                'section' => 'basic_security',
+                'description' => __('Disable bundled theme install when upgrading WordPress.', 'snn')
+            ),
+            array(
+                'id' => 'enable_math_captcha',
+                'label' => __('Enable Math Captcha', 'snn'),
+                'type' => 'checkbox',
+                'section' => 'basic_security',
+                'description' => __('Add a math captcha challenge on the login page to improve security.', 'snn')
+            ),
+            array(
+                'id' => 'disable_emojis',
+                'label' => __('Disable Emojis', 'snn'),
+                'type' => 'checkbox',
+                'section' => 'basic_security',
+                'description' => __('Disable emoji support in WordPress both frontend and wp-admin.', 'snn')
+            ),
+            array(
+                'id' => 'disable_gravatar',
+                'label' => __('Disable Gravatar', 'snn'),
+                'type' => 'checkbox',
+                'section' => 'basic_security',
+                'description' => __('Disable Gravatar support throughout the site.', 'snn')
+            ),
+            
+            // Advanced Head Cleanup
+            array(
+                'id' => 'remove_wp_generator',
+                'label' => __('Remove WP Generator', 'snn'),
+                'type' => 'checkbox',
+                'section' => 'head_cleanup',
+                'description' => __('Remove WordPress generator meta tag.', 'snn')
+            ),
+            array(
+                'id' => 'remove_wlw_manifest',
+                'label' => __('Remove WLW Manifest', 'snn'),
+                'type' => 'checkbox',
+                'section' => 'head_cleanup',
+                'description' => __('Remove Windows Live Writer manifest link.', 'snn')
+            ),
+            array(
+                'id' => 'remove_rsd_link',
+                'label' => __('Remove RSD Link', 'snn'),
+                'type' => 'checkbox',
+                'section' => 'head_cleanup',
+                'description' => __('Remove Really Simple Discovery link.', 'snn')
+            ),
+            array(
+                'id' => 'remove_shortlink',
+                'label' => __('Remove Shortlink', 'snn'),
+                'type' => 'checkbox',
+                'section' => 'head_cleanup',
+                'description' => __('Remove WordPress shortlink.', 'snn')
+            ),
+            array(
+                'id' => 'remove_wp_json_links',
+                'label' => __('Remove WP JSON Links', 'snn'),
+                'type' => 'checkbox',
+                'section' => 'head_cleanup',
+                'description' => __('Remove WordPress JSON API links.', 'snn')
+            ),
+            array(
+                'id' => 'remove_oembed_links',
+                'label' => __('Remove OEmbed Links', 'snn'),
+                'type' => 'checkbox',
+                'section' => 'head_cleanup',
+                'description' => __('Remove OEmbed discovery links.', 'snn')
+            ),
+            array(
+                'id' => 'remove_dns_prefetch',
+                'label' => __('Remove DNS Prefetch', 'snn'),
+                'type' => 'checkbox',
+                'section' => 'head_cleanup',
+                'description' => __('Remove DNS prefetch hints.', 'snn')
+            ),
+            array(
+                'id' => 'remove_emoji_scripts',
+                'label' => __('Remove Emoji Scripts', 'snn'),
+                'type' => 'checkbox',
+                'section' => 'head_cleanup',
+                'description' => __('Remove emoji detection scripts.', 'snn')
+            ),
+            array(
+                'id' => 'remove_wp_block_library',
+                'label' => __('Remove WP Block Library', 'snn'),
+                'type' => 'checkbox',
+                'section' => 'head_cleanup',
+                'description' => __('Remove WordPress block library CSS.', 'snn')
+            ),
+            
+            // Loading Optimization
+            array(
+                'id' => 'optimize_css_loading',
+                'label' => __('Optimize CSS Loading', 'snn'),
+                'type' => 'checkbox',
+                'section' => 'loading_optimization',
+                'description' => __('Optimize CSS loading with font preloading.', 'snn')
+            ),
+            array(
+                'id' => 'preload_critical_fonts',
+                'label' => __('Preload Critical Fonts', 'snn'),
+                'type' => 'checkbox',
+                'section' => 'loading_optimization',
+                'description' => __('Preload critical fonts for better performance.', 'snn')
+            ),
+            array(
+                'id' => 'keep_essential_meta',
+                'label' => __('Keep Essential Meta', 'snn'),
+                'type' => 'checkbox',
+                'section' => 'loading_optimization',
+                'description' => __('Keep essential meta tags (charset, viewport).', 'snn')
+            ),
+            array(
+                'id' => 'keep_social_meta',
+                'label' => __('Keep Social Meta', 'snn'),
+                'type' => 'checkbox',
+                'section' => 'loading_optimization',
+                'description' => __('Keep social media meta tags (Open Graph, Twitter Card).', 'snn')
+            ),
+            array(
+                'id' => 'keep_seo_meta',
+                'label' => __('Keep SEO Meta', 'snn'),
+                'type' => 'checkbox',
+                'section' => 'loading_optimization',
+                'description' => __('Keep SEO meta tags (canonical, robots).', 'snn')
+            ),
+            
+            // Protocol Settings
+            array(
+                'id' => 'force_https',
+                'label' => __('Force HTTPS', 'snn'),
+                'type' => 'checkbox',
+                'section' => 'protocol_settings',
+                'description' => __('Force redirection to HTTPS (use with caution).', 'snn')
+            ),
+            array(
+                'id' => 'fix_mixed_content',
+                'label' => __('Fix Mixed Content', 'snn'),
+                'type' => 'checkbox',
+                'section' => 'protocol_settings',
+                'description' => __('Automatically fix mixed content URLs.', 'snn')
+            ),
+            array(
+                'id' => 'add_cors_headers',
+                'label' => __('Add CORS Headers', 'snn'),
+                'type' => 'checkbox',
+                'section' => 'protocol_settings',
+                'description' => __('Add CORS headers for same-domain resources.', 'snn')
+            ),
+            array(
+                'id' => 'protocol_detection',
+                'label' => __('Protocol Detection', 'snn'),
+                'type' => 'checkbox',
+                'section' => 'protocol_settings',
+                'description' => __('Add protocol detection in JavaScript.', 'snn')
+            ),
+            array(
+                'id' => 'fix_font_urls',
+                'label' => __('Fix Font URLs', 'snn'),
+                'type' => 'checkbox',
+                'section' => 'protocol_settings',
+                'description' => __('Fix font URLs to prevent CORS errors.', 'snn')
+            ),
+            
+            // Resource Management
+            array(
+                'id' => 'conditional_dashicons',
+                'label' => __('Conditional Dashicons', 'snn'),
+                'type' => 'checkbox',
+                'section' => 'resource_management',
+                'description' => __('Load Dashicons only for logged-in users with editor+ permissions.', 'snn')
+            )
+        );
+    }
+    
+    /**
+     * Render field
+     */
+    public function render_field($args) {
+        $options = get_option($this->option_name, array());
+        $field_id = $args['field_id'];
+        $field_type = $args['field_type'];
+        $description = $args['description'];
+        
+        $value = isset($options[$field_id]) ? $options[$field_id] : 0;
+        
+        switch ($field_type) {
+            case 'checkbox':
+                echo '<input type="checkbox" name="' . $this->option_name . '[' . $field_id . ']" value="1" ' . checked($value, 1, false) . '>';
+                break;
+            case 'text':
+                echo '<input type="text" name="' . $this->option_name . '[' . $field_id . ']" value="' . esc_attr($value) . '" class="regular-text">';
+                break;
+            case 'textarea':
+                echo '<textarea name="' . $this->option_name . '[' . $field_id . ']" rows="5" cols="50" class="large-text">' . esc_textarea($value) . '</textarea>';
+                break;
+        }
+        
+        if ($description) {
+            echo '<p class="description">' . esc_html($description) . '</p>';
+        }
+    }
+    
+    /**
+     * Sanitize options
+     */
+    public function sanitize_options($input) {
+        $sanitized = array();
+        
+        if (is_array($input)) {
+            foreach ($input as $key => $value) {
+                $sanitized[$key] = sanitize_text_field($value);
+            }
+        }
+        
+        return $sanitized;
+    }
+    
+    /**
+     * Render admin page
+     */
+    public function render_admin_page() {
+        ?>
+        <div class="wrap">
+            <h1><?php esc_html_e('Security & Optimization Settings', 'snn'); ?></h1>
+            
+            <?php settings_errors(); ?>
+            
+            <form method="post" action="options.php">
+                <?php
+                settings_fields($this->option_group);
+                do_settings_sections($this->page_slug);
+                submit_button();
+                ?>
+            </form>
+        </div>
+        
+        <style>
+        [type="checkbox"] {
+            width: 18px !important;
+            height: 18px !important;
+            float: left;
+            margin-right: 10px !important;
+        }
+        .form-table th {
+            width: 200px;
+        }
+        </style>
+        <?php
+    }
+    
+    /**
+     * Apply security settings
+     */
+    public function apply_security_settings() {
+        $options = get_option($this->option_name, array());
+        
+        // Apply optimizations regardless of settings (always active)
+        $this->apply_head_optimizations();
+        
+        // Basic Security Settings
+        if (isset($options['disable_xmlrpc']) && $options['disable_xmlrpc']) {
+            add_filter('xmlrpc_enabled', '__return_false');
+        }
+        
+        if (isset($options['disable_json_api_guests']) && $options['disable_json_api_guests']) {
+            add_filter('rest_authentication_errors', array($this, 'disable_json_for_guests'));
+        }
+        
+        if (isset($options['disable_file_editing']) && $options['disable_file_editing']) {
+            define('DISALLOW_FILE_EDIT', true);
+        }
+        
+        if (isset($options['remove_rss_feeds']) && $options['remove_rss_feeds']) {
+            $this->remove_rss_feeds();
+        }
+        
+        if (isset($options['hide_wp_version']) && $options['hide_wp_version']) {
+            add_filter('the_generator', '__return_empty_string');
+        }
+        
+        if (isset($options['disable_bundled_themes']) && $options['disable_bundled_themes']) {
+            define('CORE_UPGRADE_SKIP_NEW_BUNDLED', true);
+        }
+        
+        if (isset($options['enable_math_captcha']) && $options['enable_math_captcha']) {
+            $this->enable_math_captcha();
+        }
+        
+        if (isset($options['disable_emojis']) && $options['disable_emojis']) {
+            $this->disable_emojis();
+        }
+        
+        if (isset($options['disable_gravatar']) && $options['disable_gravatar']) {
+            add_filter('get_avatar', '__return_empty_string');
+        }
+        
+        // Advanced Head Cleanup
+        if (isset($options['remove_wp_generator']) && $options['remove_wp_generator']) {
+            remove_action('wp_head', 'wp_generator');
+        }
+        
+        if (isset($options['remove_wlw_manifest']) && $options['remove_wlw_manifest']) {
+            remove_action('wp_head', 'wlwmanifest_link');
+        }
+        
+        if (isset($options['remove_rsd_link']) && $options['remove_rsd_link']) {
+            remove_action('wp_head', 'rsd_link');
+        }
+        
+        if (isset($options['remove_shortlink']) && $options['remove_shortlink']) {
+            remove_action('wp_head', 'wp_shortlink_wp_head');
+        }
+        
+        if (isset($options['remove_wp_json_links']) && $options['remove_wp_json_links']) {
+            remove_action('wp_head', 'rest_output_link_wp_head');
+        }
+        
+        if (isset($options['remove_oembed_links']) && $options['remove_oembed_links']) {
+            remove_action('wp_head', 'wp_oembed_add_discovery_links');
+        }
+        
+        if (isset($options['remove_dns_prefetch']) && $options['remove_dns_prefetch']) {
+            remove_action('wp_head', 'wp_resource_hints', 2);
+        }
+        
+        if (isset($options['remove_emoji_scripts']) && $options['remove_emoji_scripts']) {
+            remove_action('wp_head', 'print_emoji_detection_script', 7);
+        }
+        
+        if (isset($options['remove_wp_block_library']) && $options['remove_wp_block_library']) {
+            add_action('wp_enqueue_scripts', array($this, 'remove_wp_block_library'));
+        }
+        
+        // Loading Optimization
+        if (isset($options['optimize_css_loading']) && $options['optimize_css_loading']) {
+            add_action('wp_head', array($this, 'optimize_css_loading'), 1);
+        }
+        
+        if (isset($options['preload_critical_fonts']) && $options['preload_critical_fonts']) {
+            add_action('wp_head', array($this, 'preload_critical_fonts'), 1);
+        }
+        
+        // Protocol Settings
+        if (isset($options['force_https']) && $options['force_https']) {
+            add_action('template_redirect', array($this, 'force_https'));
+        }
+        
+        if (isset($options['fix_mixed_content']) && $options['fix_mixed_content']) {
+            add_action('wp_head', array($this, 'fix_mixed_content'));
+        }
+        
+        if (isset($options['add_cors_headers']) && $options['add_cors_headers']) {
+            add_action('send_headers', array($this, 'add_cors_headers'));
+        }
+        
+        if (isset($options['protocol_detection']) && $options['protocol_detection']) {
+            add_action('wp_footer', array($this, 'protocol_detection_script'));
+        }
+        
+        if (isset($options['fix_font_urls']) && $options['fix_font_urls']) {
+            add_action('wp_head', array($this, 'fix_font_urls'));
+        }
+    }
+    
+    /**
+     * Apply head optimizations (always active)
+     */
+    private function apply_head_optimizations() {
+        // Remove duplicate CSS loading
+        add_action('wp_enqueue_scripts', array($this, 'prevent_duplicate_css'), 20);
+        
+        // Conditional Dashicons loading
+        add_action('wp_enqueue_scripts', array($this, 'conditional_dashicons'), 20);
+        
+        // Limit inline CSS
+        add_filter('styles_inline_size_limit', function() {
+            return 0; // Force external files instead of inline CSS
+        });
+        
+        // Remove unnecessary API links
+        remove_action('wp_head', 'rest_output_link_wp_head');
+        remove_action('wp_head', 'wp_shortlink_wp_head');
+        remove_action('wp_head', 'wp_oembed_add_discovery_links');
+        
+        // Remove WordPress generator
+        remove_action('wp_head', 'wp_generator');
+        
+        // Remove RSD link
+        remove_action('wp_head', 'rsd_link');
+        
+        // Remove WLW manifest
+        remove_action('wp_head', 'wlwmanifest_link');
+        
+        // Remove DNS prefetch
+        remove_action('wp_head', 'wp_resource_hints', 2);
+        
+        // Optimize WindPress
+        add_filter('windpress_debug_mode', '__return_false');
+        
+        // Remove admin bar for non-admin users
+        if (!current_user_can('administrator')) {
+            add_filter('show_admin_bar', '__return_false');
+        }
+    }
+    
+    /**
+     * Prevent duplicate CSS loading
+     */
+    public function prevent_duplicate_css() {
+        // Remove preload if stylesheet is already loaded
+        add_action('wp_head', function() {
+            echo '<script>
+            document.addEventListener("DOMContentLoaded", function() {
+                var preloadLinks = document.querySelectorAll("link[rel=\'preload\'][as=\'style\']");
+                var stylesheetLinks = document.querySelectorAll("link[rel=\'stylesheet\']");
+                
+                preloadLinks.forEach(function(preload) {
+                    var preloadHref = preload.href;
+                    stylesheetLinks.forEach(function(stylesheet) {
+                        if (stylesheet.href === preloadHref) {
+                            preload.remove();
+                        }
+                    });
+                });
+            });
+            </script>';
+        }, 1);
+    }
+    
+    /**
+     * Conditional Dashicons loading
+     */
+    public function conditional_dashicons() {
+        // Only load Dashicons for logged-in users with editor+ permissions
+        if (!is_user_logged_in() || !current_user_can('edit_posts')) {
+            wp_dequeue_style('dashicons');
+        }
+    }
+    
+    /**
+     * Disable JSON API for guests
+     */
+    public function disable_json_for_guests($result) {
+        if (!is_user_logged_in()) {
+            return new WP_Error('rest_not_logged_in', __('You are not logged in.', 'snn'), array('status' => 401));
+        }
+        return $result;
+    }
+    
+    /**
+     * Remove RSS feeds
+     */
+    private function remove_rss_feeds() {
+        remove_action('wp_head', 'rsd_link');
+        remove_action('wp_head', 'feed_links', 2);
+        remove_action('wp_head', 'feed_links_extra', 3);
+        remove_action('wp_head', 'wlwmanifest_link');
+    }
+    
+    /**
+     * Enable math captcha
+     */
+    private function enable_math_captcha() {
+        // Include math captcha functionality
+        require_once SNN_PATH . 'includes/login-math-captcha.php';
+    }
+    
+    /**
+     * Disable emojis
+     */
+    private function disable_emojis() {
+        // Front-end removal
+        remove_action('wp_head', 'print_emoji_detection_script', 7);
+        remove_action('wp_print_styles', 'print_emoji_styles');
+        
+        // Feeds
+        remove_filter('the_content_feed', 'wp_staticize_emoji');
+        remove_filter('comment_text_rss', 'wp_staticize_emoji');
+        
+        // Emails
+        remove_filter('wp_mail', 'wp_staticize_emoji_for_email');
+        
+        // Embeds
+        remove_action('embed_head', 'print_emoji_detection_script');
+        remove_action('embed_print_styles', 'print_emoji_styles');
+        
+        // TinyMCE editor
+        add_filter('tiny_mce_plugins', array($this, 'disable_emojis_tinymce'));
+        
+        // Admin area
+        remove_action('admin_print_scripts', 'print_emoji_detection_script');
+        remove_action('admin_print_styles', 'print_emoji_styles');
+    }
+    
+    /**
+     * Disable emojis in TinyMCE
+     */
+    public function disable_emojis_tinymce($plugins) {
+        if (is_array($plugins)) {
+            return array_diff($plugins, array('wpemoji'));
+        }
+        return array();
+    }
+    
+    /**
+     * Remove WordPress block library
+     */
+    public function remove_wp_block_library() {
+        wp_dequeue_style('wp-block-library');
+        wp_dequeue_style('wp-block-library-theme');
+    }
+    
+    /**
+     * Optimize CSS loading
+     */
+    public function optimize_css_loading() {
+        // Add font preloading and CSS optimization
+        echo '<link rel="preload" href="' . get_stylesheet_uri() . '" as="style" onload="this.onload=null;this.rel=\'stylesheet\'">';
+    }
+    
+    /**
+     * Preload critical fonts
+     */
+    public function preload_critical_fonts() {
+        // Add critical font preloading
+        echo '<link rel="preload" href="' . SNN_URL_ASSETS . 'fonts/pxiEyp8kv8JHgFVrFJXUc1NECPY.woff2" as="font" type="font/woff2" crossorigin>';
+    }
+    
+    /**
+     * Force HTTPS
+     */
+    public function force_https() {
+        if (!is_ssl()) {
+            wp_redirect('https://' . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'], 301);
+            exit();
+        }
+    }
+    
+    /**
+     * Fix mixed content
+     */
+    public function fix_mixed_content() {
+        echo '<meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">';
+    }
+    
+    /**
+     * Add CORS headers
+     */
+    public function add_cors_headers() {
+        header('Access-Control-Allow-Origin: ' . home_url());
+        header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
+        header('Access-Control-Allow-Headers: Content-Type');
+    }
+    
+    /**
+     * Protocol detection script
+     */
+    public function protocol_detection_script() {
+        ?>
+        <script>
+        if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
+            location.replace('https:' + window.location.href.substring(window.location.protocol.length));
+        }
+        </script>
+        <?php
+    }
+    
+    /**
+     * Fix font URLs
+     */
+    public function fix_font_urls() {
+        echo '<style>@font-face { font-display: swap; }</style>';
+    }
+    
+    /**
+     * Conditional Dashicons loading (updated method)
+     */
+    public function conditional_dashicons_new() {
+        $options = get_option($this->option_name, array());
+        
+        if (isset($options['conditional_dashicons']) && $options['conditional_dashicons']) {
+            if (is_user_logged_in() && current_user_can('edit_posts')) {
+                wp_enqueue_style('dashicons');
+            }
+        } else {
+            wp_enqueue_style('dashicons');
+        }
+    }
+}
+
+// Initialize the class
+new SNN_Security_Optimization();
