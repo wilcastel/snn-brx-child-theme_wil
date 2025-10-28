@@ -37,6 +37,24 @@ add_action('wp_enqueue_scripts', function () {
         true
       );
     }
+    
+    // Cargar estilos de optimización de assets si están habilitados
+    if (get_option('snn_assets_options')['enable_critical_css'] ?? true) {
+      wp_enqueue_style(
+        'snn-assets-optimization', 
+        SNN_URL . 'assets/css/assets-optimization.css', 
+        ['snn-theme-specific'], 
+        filemtime(SNN_PATH . 'assets/css/assets-optimization.css')
+      );
+      
+      wp_enqueue_script(
+        'snn-assets-optimization', 
+        SNN_URL . 'assets/js/assets-optimization.js', 
+        array(), 
+        filemtime(SNN_PATH . 'assets/js/assets-optimization.js'),
+        true
+      );
+    }
   }
 });
 

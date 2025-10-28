@@ -43,6 +43,15 @@ require_once SNN_PATH . 'includes/webp-image-admin.php';
 // WebP Image Optimization Settings Page
 require_once SNN_PATH . 'includes/webp-image-settings.php';
 
+// Assets Optimization System
+require_once SNN_PATH . 'includes/assets-optimization.php';
+
+// Assets Optimization Admin Page
+require_once SNN_PATH . 'includes/assets-optimization-admin.php';
+
+// Assets Optimization Settings Page
+require_once SNN_PATH . 'includes/assets-optimization-settings.php';
+
 // Legacy security files (kept for compatibility - functionality moved to security-optimization.php)
 // require_once SNN_PATH . 'includes/security-page.php';
 // require_once SNN_PATH . 'includes/remove-wp-version.php';
