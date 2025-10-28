@@ -22,6 +22,18 @@ require_once SNN_PATH . 'includes/head-optimization.php';
 // Security migration helper (run once to migrate existing options)
 require_once SNN_PATH . 'includes/security-migration.php';
 
+// XML Sitemaps Settings Page (must be loaded before admin page)
+require_once SNN_PATH . 'includes/xml-sitemaps-settings.php';
+
+// XML Sitemaps Admin Page
+require_once SNN_PATH . 'includes/xml-sitemaps-admin.php';
+
+// XML Sitemaps Generator (optimized for large sites)
+require_once SNN_PATH . 'includes/xml-sitemaps-generator.php';
+
+// XML Sitemaps Rewrite Rules
+require_once SNN_PATH . 'includes/xml-sitemaps-rewrite.php';
+
 // Legacy security files (kept for compatibility - functionality moved to security-optimization.php)
 // require_once SNN_PATH . 'includes/security-page.php';
 // require_once SNN_PATH . 'includes/remove-wp-version.php';
