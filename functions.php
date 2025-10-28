@@ -34,6 +34,15 @@ require_once SNN_PATH . 'includes/xml-sitemaps-generator.php';
 // XML Sitemaps Rewrite Rules
 require_once SNN_PATH . 'includes/xml-sitemaps-rewrite.php';
 
+// WebP Image Optimization System
+require_once SNN_PATH . 'includes/webp-image-optimizer.php';
+
+// WebP Image Optimization Admin Page
+require_once SNN_PATH . 'includes/webp-image-admin.php';
+
+// WebP Image Optimization Settings Page
+require_once SNN_PATH . 'includes/webp-image-settings.php';
+
 // Legacy security files (kept for compatibility - functionality moved to security-optimization.php)
 // require_once SNN_PATH . 'includes/security-page.php';
 // require_once SNN_PATH . 'includes/remove-wp-version.php';

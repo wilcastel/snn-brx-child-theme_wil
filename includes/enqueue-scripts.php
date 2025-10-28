@@ -19,6 +19,24 @@ add_action('wp_enqueue_scripts', function () {
         filemtime(SNN_PATH . 'assets/css/snn-rich-text-editor.css')
       );
     }
+    
+    // Cargar estilos de optimización WebP si están habilitados
+    if (get_option('snn_webp_options')['enable_webp'] ?? true) {
+      wp_enqueue_style(
+        'snn-webp-optimization', 
+        SNN_URL . 'assets/css/webp-optimization.css', 
+        ['snn-theme-specific'], 
+        filemtime(SNN_PATH . 'assets/css/webp-optimization.css')
+      );
+      
+      wp_enqueue_script(
+        'snn-webp-optimization', 
+        SNN_URL . 'assets/js/webp-optimization.js', 
+        array(), 
+        filemtime(SNN_PATH . 'assets/js/webp-optimization.js'),
+        true
+      );
+    }
   }
 });
 

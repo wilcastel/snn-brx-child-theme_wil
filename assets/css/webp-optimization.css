@@ -1,0 +1,202 @@
+/*
+ * WebP Image Optimization Styles
+ * 
+ * Styles for lazy loading and image optimization
+ * 
+ * @package SNN-BRX-WIL
+ * @since 1.0.0
+ */
+
+/* ========================================
+   LAZY LOADING STYLES
+   ======================================== */
+
+.snn-lazy-image {
+    opacity: 0;
+    transition: opacity 0.3s ease-in-out;
+}
+
+.snn-lazy-image.loaded {
+    opacity: 1;
+}
+
+.snn-lazy-image.loading {
+    background: #f3f4f6;
+    background-image: linear-gradient(90deg, #f3f4f6 25%, #e5e7eb 50%, #f3f4f6 75%);
+    background-size: 200% 100%;
+    animation: loading 1.5s infinite;
+}
+
+@keyframes loading {
+    0% {
+        background-position: 200% 0;
+    }
+    100% {
+        background-position: -200% 0;
+    }
+}
+
+/* ========================================
+   PLACEHOLDER STYLES
+   ======================================== */
+
+.snn-image-placeholder {
+    background: #f3f4f6;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #9ca3af;
+    font-size: 14px;
+    min-height: 200px;
+}
+
+.snn-image-placeholder::before {
+    content: "🖼️";
+    font-size: 24px;
+    margin-right: 8px;
+}
+
+/* ========================================
+   RESPONSIVE IMAGES
+   ======================================== */
+
+.snn-responsive-image {
+    max-width: 100%;
+    height: auto;
+    display: block;
+}
+
+/* ========================================
+   CRITICAL IMAGE STYLES
+   ======================================== */
+
+.snn-critical-image {
+    /* Ensure critical images load immediately */
+    opacity: 1 !important;
+    transition: none !important;
+}
+
+/* ========================================
+   WEBP FALLBACK STYLES
+   ======================================== */
+
+.no-webp .snn-webp-image {
+    display: none;
+}
+
+.webp .snn-fallback-image {
+    display: none;
+}
+
+/* ========================================
+   LOADING STATES
+   ======================================== */
+
+.snn-image-container {
+    position: relative;
+    overflow: hidden;
+}
+
+.snn-image-container::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: #f3f4f6;
+    opacity: 0;
+    transition: opacity 0.3s ease-in-out;
+    pointer-events: none;
+}
+
+.snn-image-container.loading::after {
+    opacity: 1;
+}
+
+.snn-image-container.loaded::after {
+    opacity: 0;
+}
+
+/* ========================================
+   OPTIMIZATION INDICATORS
+   ======================================== */
+
+.snn-webp-badge {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: #10b981;
+    color: white;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: bold;
+    text-transform: uppercase;
+    opacity: 0;
+    transition: opacity 0.3s ease-in-out;
+}
+
+.snn-image-container:hover .snn-webp-badge {
+    opacity: 1;
+}
+
+/* ========================================
+   MOBILE OPTIMIZATIONS
+   ======================================== */
+
+@media (max-width: 768px) {
+    .snn-lazy-image {
+        /* Faster transitions on mobile */
+        transition: opacity 0.2s ease-in-out;
+    }
+    
+    .snn-image-placeholder {
+        min-height: 150px;
+        font-size: 12px;
+    }
+    
+    .snn-image-placeholder::before {
+        font-size: 20px;
+    }
+}
+
+/* ========================================
+   HIGH DPI DISPLAYS
+   ======================================== */
+
+@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
+    .snn-lazy-image {
+        /* Ensure crisp images on retina displays */
+        image-rendering: -webkit-optimize-contrast;
+        image-rendering: crisp-edges;
+    }
+}
+
+/* ========================================
+   ACCESSIBILITY
+   ======================================== */
+
+.snn-lazy-image:focus {
+    outline: 2px solid #2271b1;
+    outline-offset: 2px;
+}
+
+.snn-image-container[aria-label] {
+    cursor: pointer;
+}
+
+/* ========================================
+   PERFORMANCE OPTIMIZATIONS
+   ======================================== */
+
+.snn-lazy-image {
+    /* Use GPU acceleration */
+    transform: translateZ(0);
+    will-change: opacity;
+}
+
+.snn-image-container {
+    /* Optimize repaints */
+    contain: layout style paint;
+}
