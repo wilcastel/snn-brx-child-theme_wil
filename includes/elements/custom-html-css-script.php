@@ -5,10 +5,10 @@ class Custom_HTML_CSS_Script extends \Bricks\Element {
   public $category     = 'snn';
   public $name         = 'custom-html-css-script';
   public $icon         = 'fas fa-code'; 
-  public $css_selector = '.snn-brx-html-css-script-wrapper';
+  public $css_selector = '.snn-brx-wil-html-css-script-wrapper';
 
   public function get_label() {
-    return 'Custom Code HTML JS CSS';
+    return 'Code HTML JS CSS';
   }
 
   public function set_controls() {

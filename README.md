@@ -1,16 +1,17 @@
-# SNN-BRX - Bricks Builder Child Theme
+# SNN-BRX-WIL - Bricks Builder Child Theme
 
 [![GPL-3.0](https://img.shields.io/github/license/ESKYoung/shields-io-visitor-counter?logo=GNU&logoColor=FFFFFF)](https://github.com/sinanisler/snn-brx-child-theme/blob/main/license.txt)
 [![Gmail Badge](https://img.shields.io/badge/-Download_Latest_Release-29903b?style=flat&logo=Download&logoColor=white)](https://sinanisler.com/snn-brx-download)
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/sinanisler/snn-brx-child-theme)
+[![Sponsor me](https://img.shields.io/badge/Sponsor_The_Project_❤-GitHub-d46)](https://github.com/sponsors/sinanisler)
 
+ 
 
-
-SNN-BRX is a professional and powerful child theme designed to be the essential building suite for agencies and professionals using Bricks Builder. It streamlines your Bricks Builder projects by offering a comprehensive collection of features and tools, all within a single, robust child theme. Say goodbye to plugin overload and embrace a more efficient, performant, and unified website building experience.
+SNN-BRX-WIL is a professional and powerful child theme designed to be the essential building suite for agencies and professionals using Bricks Builder. It streamlines your Bricks Builder projects by offering a comprehensive collection of features and tools, all within a single, robust child theme. Say goodbye to plugin overload and embrace a more efficient, performant, and unified website building experience.
 
 ## Key Features
 
-SNN-BRX aims to replace the need for numerous individual plugins by integrating core functionalities directly into the theme. Here's a glimpse of what SNN-BRX offers:
+SNN-BRX-WIL aims to replace the need for numerous individual plugins by integrating core functionalities directly into the theme. Here's a glimpse of what SNN-BRX-WIL offers:
 
 *   **White Labeling:** Brand the theme as your own.
 *   **Custom Post Types:** Easily create and manage custom post types.
@@ -42,20 +43,20 @@ SNN-BRX aims to replace the need for numerous individual plugins by integrating 
 *   **Role Manager:** Control user roles and permissions.
 *   **Code Snippets:** Add custom code snippets easily.
 
-## Why SNN-BRX?
+## Why SNN-BRX-WIL?
 
-The primary goal behind SNN-BRX is to **achieve a more efficient and simplified website building process.** By consolidating the functionalities of over 25 plugins into one child theme, SNN-BRX significantly reduces plugin dependency, saving you valuable time, resources, and improving website performance. Its modular design ensures that you only use the features you need, preventing unnecessary server load.
+The primary goal behind SNN-BRX-WIL is to **achieve a more efficient and simplified website building process.** By consolidating the functionalities of over 25 plugins into one child theme, SNN-BRX-WIL significantly reduces plugin dependency, saving you valuable time, resources, and improving website performance. Its modular design ensures that you only use the features you need, preventing unnecessary server load.
 
 ## Getting Started
 
-1.  **Installation:** Install SNN-BRX as a child theme to your Bricks Builder installation.
+1.  **Installation:** Install SNN-BRX-WIL as a child theme to your Bricks Builder installation.
 2.  **Configuration:** Navigate to the "SNN Settings" panel in your WordPress dashboard to enable and configure the features you require.
 3.  **Explore Features:** Dive into the extensive features, from advanced animations and AI content generation to robust security and redirect management.
 
 
 ### Custom Post Types, Fields, and Taxonomies
 
-SNN-BRX provides an intuitive admin interface to effortlessly create and manage:
+SNN-BRX-WIL provides an intuitive admin interface to effortlessly create and manage:
 
 *   **Custom Post Types:** Define names, slugs, visibility, and supported features (title, editor, thumbnails).
 *   **Custom Fields:** Assign various field types (text, number, date, media) to post types or taxonomies, with support for repeater fields.
@@ -82,7 +83,7 @@ Supercharge your content creation:
 
 Experience a new level of color management:
 
-*   **Global Color Synchronization:** Ensures that global color variables created with SNN-BRX are consistently available and visually represented across all Bricks Builder color palettes.
+*   **Global Color Synchronization:** Ensures that global color variables created with SNN-BRX-WIL are consistently available and visually represented across all Bricks Builder color palettes.
 *   **Automatic Shade Generation:** Create automatic light and dark shades of your chosen colors by simply setting a shade count.
 *   **Flexible Color Units:** Supports hex colors and any valid CSS color units.
 
@@ -104,7 +105,7 @@ Stay informed about future developments and planned features on the [Roadmap](ht
 
 ## Support and Community
 
-*   **FAQs:** Find answers to frequently asked questions on the [FAQs](https://sinanisler.com/snn-brx/#faqs/) page.
+*   **FAQs:** Find answers to frequently asked questions on the [FAQs](https://sinanisler.com/snn-brx/#faq) page.
 *   **Bug Report:** Report any issues you encounter via the [Bug Report](https://github.com/sinanisler/snn-brx-child-theme/issues) section.
 *   **Discussions:** Engage with the community and share your experiences in the [Discussions](https://github.com/sinanisler/snn-brx-child-theme/discussions/) forum.
 

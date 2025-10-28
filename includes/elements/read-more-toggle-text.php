@@ -36,13 +36,14 @@ class Prefix_Element_Toggle_Text extends Element {
 
         $this->controls['button_selector'] = [
             'tab'         => 'content',
-            'label'       => esc_html__( 'Native Button Selector (ID)', 'snn' ),
+            'label'       => esc_html__( 'Button Selector (ID or Class)', 'snn' ),
             'type'        => 'text',
             'default'     => '',
-            'placeholder' => '#my-button',
+            'placeholder' => '#my-button or .my-button',
             'description' => "
                 <p data-control='info'>
-                    Add a button and copy the ID here to make the toggle work.<br><br>
+                    Add a button and copy the selector (ID or Class) here to make the toggle work.<br>
+                    Each instance should have a unique button selector.<br><br>
                     Button icon animate CSS: <br>
                     %root%.active-toggle-text i{ <br>
                         rotate:180deg; <br>
@@ -72,6 +73,11 @@ class Prefix_Element_Toggle_Text extends Element {
         $text_height     = $this->settings['text_height'] ?? 100;
         $button_selector = $this->settings['button_selector'] ?? '';
 
+        // Add button selector as data attribute if provided
+        if ( ! empty( $button_selector ) ) {
+            $this->set_attribute( '_root', 'data-button-selector', $button_selector );
+        }
+
         ?>
         <style>
             .toggle-text-wrapper {
@@ -90,7 +96,7 @@ class Prefix_Element_Toggle_Text extends Element {
         </div>
 
         <script>
-            document.addEventListener("DOMContentLoaded", function() {
+            (function() {
                 const container = document.querySelector(".<?php echo esc_js( $unique_class ); ?>");
                 if (!container) return;
 
@@ -98,30 +104,59 @@ class Prefix_Element_Toggle_Text extends Element {
                 if (!content) return;
 
                 <?php if ( ! empty( $button_selector ) ) : ?>
-                    const button = document.querySelector(<?php echo json_encode( $button_selector ); ?>);
-                    if (!button) return;
-
                     const collapsedHeight = <?php echo json_encode( $text_height ); ?>;
+                    const buttonSelector = <?php echo json_encode( $button_selector ); ?>;
+                    
+                    // Set initial collapsed height
                     content.style.maxHeight = collapsedHeight + "px";
 
                     let isExpanded = false;
 
-                    button.addEventListener("click", function() {
-                        if (isExpanded) {
-                            content.style.maxHeight = collapsedHeight + "px";
-                            button.classList.remove("active-toggle-text");
-                            button.setAttribute("aria-expanded", "false");
+                    // Function to initialize button
+                    function initButton() {
+                        const button = document.querySelector(buttonSelector);
+                        if (!button) return false;
+
+                        // Add data attribute to button to match this toggle text
+                        button.setAttribute("data-toggle-target", ".<?php echo esc_js( $unique_class ); ?>");
+                        button.setAttribute("aria-expanded", "false");
+
+                        // Remove any existing listeners to prevent duplicates
+                        const newButton = button.cloneNode(true);
+                        button.parentNode.replaceChild(newButton, button);
+
+                        newButton.addEventListener("click", function(e) {
+                            e.preventDefault();
+                            
+                            if (isExpanded) {
+                                content.style.maxHeight = collapsedHeight + "px";
+                                newButton.classList.remove("active-toggle-text");
+                                newButton.setAttribute("aria-expanded", "false");
+                            } else {
+                                content.style.maxHeight = content.scrollHeight + "px";
+                                newButton.classList.add("active-toggle-text");
+                                newButton.setAttribute("aria-expanded", "true");
+                            }
+                            isExpanded = !isExpanded;
+                        });
+
+                        return true;
+                    }
+
+                    // Try to initialize immediately
+                    if (!initButton()) {
+                        // If button not found, wait for DOM to be fully loaded
+                        if (document.readyState === 'loading') {
+                            document.addEventListener('DOMContentLoaded', initButton);
                         } else {
-                            content.style.maxHeight = content.scrollHeight + "px";
-                            button.classList.add("active-toggle-text");
-                            button.setAttribute("aria-expanded", "true");
+                            // Wait a bit for dynamic content
+                            setTimeout(initButton, 100);
                         }
-                        isExpanded = !isExpanded;
-                    });
+                    }
                 <?php else : ?>
-                    // console.warn("Button selector is not defined.");
+                    console.warn("Button selector is not defined for toggle text element.");
                 <?php endif; ?>
-            });
+            })();
         </script>
         <?php
     }

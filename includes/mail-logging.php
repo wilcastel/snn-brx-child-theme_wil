@@ -19,6 +19,39 @@ function snn_add_mail_logs_page() {
 }
 add_action('admin_menu', 'snn_add_mail_logs_page');
 
+// AJAX handler to fetch mail message content
+function snn_get_mail_message_ajax() {
+    check_ajax_referer('snn_mail_logs_nonce', 'nonce');
+    
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error(array('message' => __('Unauthorized', 'snn')));
+        return;
+    }
+    
+    $log_id = isset($_POST['log_id']) ? intval($_POST['log_id']) : 0;
+    
+    if (!$log_id) {
+        wp_send_json_error(array('message' => __('Invalid log ID', 'snn')));
+        return;
+    }
+    
+    $message = get_post_meta($log_id, 'message', true);
+    $headers_data = maybe_unserialize(get_post_meta($log_id, 'headers', true));
+    
+    $headers_html = '';
+    if (is_array($headers_data)) {
+        $headers_html = esc_html(implode(', ', $headers_data));
+    } else {
+        $headers_html = esc_html($headers_data);
+    }
+    
+    wp_send_json_success(array(
+        'message' => $message,
+        'headers' => $headers_html
+    ));
+}
+add_action('wp_ajax_snn_get_mail_message', 'snn_get_mail_message_ajax');
+
 function snn_handle_mail_logs_actions() {
     if (!current_user_can('manage_options')) {
         return;
@@ -174,20 +207,19 @@ function snn_render_mail_logs_page() {
         echo '<table class="wp-list-table wp-mail-log-list widefat fixed striped">';
         echo '<thead>';
         echo '<tr>';
-        echo '<th class="delete">' . __('Delete', 'snn') . '</th>';
+        echo '<th class="actions">' . __('Actions', 'snn') . '</th>';
         echo '<th class="date">' . __('Date & Time', 'snn') . '</th>';
+        echo '<th class="subject">' . __('Subject', 'snn') . '</th>';
         echo '<th class="from">' . __('From', 'snn') . '</th>';
         echo '<th class="to">' . __('To', 'snn') . '</th>';
-        echo '<th class="subject">' . __('Subject', 'snn') . '</th>';
-        echo '<th class="message">' . __('Message', 'snn') . '</th>';
-        echo '<th class="header">' . __('Headers', 'snn') . '</th>';
+        echo '<th class="delete">' . __('Delete', 'snn') . '</th>';
         echo '</tr>';
         echo '</thead>';
         echo '<tbody>';
 
         $args = array(
             'post_type'      => 'snn_mail_logs',
-            'posts_per_page' => 100,
+            'posts_per_page' => $log_size_limit,
             'orderby'        => 'date',
             'order'          => 'DESC'
         );
@@ -198,12 +230,20 @@ function snn_render_mail_logs_page() {
             $from         = get_post_meta($log->ID, 'from', true);
             $to           = get_post_meta($log->ID, 'to', true);
             $subject      = get_post_meta($log->ID, 'subject', true);
-            $message      = get_post_meta($log->ID, 'message', true);
-            $headers_data = maybe_unserialize(get_post_meta($log->ID, 'headers', true));
 
-            echo '<tr>';
+            echo '<tr class="mail-log-row" data-log-id="' . esc_attr($log->ID) . '">';
 
-            // Delete Button (left).
+            // View Message Button (first column)
+            echo '<td>';
+            echo '<button type="button" class="button button-secondary snn-view-message" data-log-id="' . esc_attr($log->ID) . '">' . __('View Message', 'snn') . '</button>';
+            echo '</td>';
+
+            echo '<td>' . esc_html($date_time) . '</td>';
+            echo '<td>' . esc_html($subject) . '</td>';
+            echo '<td>' . esc_html($from) . '</td>';
+            echo '<td>' . esc_html($to) . '</td>';
+            
+            // Delete Button (last column)
             echo '<td>';
             echo '<form method="post" action="">';
             echo '<input type="hidden" name="snn_delete_log_id" value="' . esc_attr($log->ID) . '">';
@@ -211,18 +251,24 @@ function snn_render_mail_logs_page() {
             echo '</form>';
             echo '</td>';
 
-            echo '<td>' . esc_html($date_time) . '</td>';
-            echo '<td>' . esc_html($from) . '</td>';
-            echo '<td>' . esc_html($to) . '</td>';
-            echo '<td>' . esc_html($subject) . '</td>';
-            echo '<td class="log-message"><iframe sandbox style="width:100%; height:250px; border:none;" srcdoc="' . esc_attr($message) . '"></iframe></td>';
-
-            if (is_array($headers_data)) {
-                echo '<td>' . esc_html(implode(', ', $headers_data)) . '</td>';
-            } else {
-                echo '<td>' . esc_html($headers_data) . '</td>';
-            }
-
+            echo '</tr>';
+            
+            // Hidden row for displaying message content
+            echo '<tr class="mail-log-details" id="mail-log-details-' . esc_attr($log->ID) . '" style="display:none;">';
+            echo '<td colspan="6">';
+            echo '<div class="mail-log-content">';
+            echo '<div class="mail-log-loading" style="display:none; padding: 20px; text-align: center;">';
+            echo '<span class="spinner is-active" style="float:none;"></span> ' . __('Loading...', 'snn');
+            echo '</div>';
+            echo '<div class="mail-log-message-wrapper" style="display:none;">';
+            echo '<h3>' . __('Message:', 'snn') . '</h3>';
+            echo '<div class="mail-log-message-content"></div>';
+            echo '<h3>' . __('Headers:', 'snn') . '</h3>';
+            echo '<div class="mail-log-headers-content"></div>';
+            echo '</div>';
+            echo '<button type="button" class="button snn-close-message">' . __('Close', 'snn') . '</button>';
+            echo '</div>';
+            echo '</td>';
             echo '</tr>';
         }
 
@@ -233,24 +279,134 @@ function snn_render_mail_logs_page() {
     echo '</div>';
 ?>
 <style>
-.log-message {
-    max-height: 250px;
-    display: block;
-}
-
 .delete {
     width: 70px;
 }
 .date {
     width: 130px;
 }
-.message {
-    width: 500px;
+.actions {
+    width: 120px;
 }
 #snn_clear_mail_logs {
     width: 100px;
 }
+.mail-log-details td {
+    background: #f9f9f9;
+    border-top: 1px solid #ddd;
+}
+.mail-log-content {
+    padding: 0px;
+}
+.mail-log-content h3{
+    padding: 0px;
+    margin:0px;
+}
+.mail-log-message-content {
+    background: #fff;
+    border: 1px solid #ddd;
+    padding: 15px;
+    margin-bottom: 15px;
+    max-height: 400px;
+    overflow-y: auto;
+    font-family: Arial, Helvetica, sans-serif;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+}
+.mail-log-message-content iframe {
+    width: 100%;
+    min-height: 250px;
+    border: none;
+}
+.mail-log-headers-content {
+    background: #fff;
+    border: 1px solid #ddd;
+    padding: 15px;
+    margin-bottom: 15px;
+    word-break: break-all;
+}
+.snn-close-message {
+    margin-top: 10px;
+}
 </style>
+<script>
+jQuery(document).ready(function($) {
+    // View message button click
+    $('.snn-view-message').on('click', function() {
+        var logId = $(this).data('log-id');
+        var detailsRow = $('#mail-log-details-' + logId);
+        var loadingDiv = detailsRow.find('.mail-log-loading');
+        var messageWrapper = detailsRow.find('.mail-log-message-wrapper');
+        
+        // Toggle visibility
+        if (detailsRow.is(':visible')) {
+            detailsRow.hide();
+            return;
+        }
+        
+        detailsRow.show();
+        loadingDiv.show();
+        messageWrapper.hide();
+        
+        // Fetch message via AJAX
+        $.ajax({
+            url: ajaxurl,
+            type: 'POST',
+            data: {
+                action: 'snn_get_mail_message',
+                log_id: logId,
+                nonce: '<?php echo wp_create_nonce('snn_mail_logs_nonce'); ?>'
+            },
+            success: function(response) {
+                loadingDiv.hide();
+                
+                if (response.success) {
+                    var message = response.data.message;
+                    
+                    // Check if message contains HTML tags
+                    var isHTML = /<[a-z][\s\S]*>/i.test(message);
+                    
+                    if (isHTML) {
+                        // Display HTML message in iframe for safe rendering
+                        var messageHtml = '<iframe sandbox style="width:100%; min-height:250px; border:none;" srcdoc="' + 
+                            '<html><head><style>body { font-family: Arial, Helvetica, sans-serif; line-height: 1.6; padding: 10px; }</style></head><body>' +
+                            message.replace(/"/g, '&quot;') + '</body></html>"></iframe>';
+                        detailsRow.find('.mail-log-message-content').html(messageHtml);
+                    } else {
+                        // Display plain text message with preserved formatting
+                        detailsRow.find('.mail-log-message-content').html(
+                            '<pre style="margin: 0; font-family: Arial, Helvetica, sans-serif; white-space: pre-wrap; word-wrap: break-word;">' + 
+                            $('<div>').text(message).html() + 
+                            '</pre>'
+                        );
+                    }
+                    
+                    detailsRow.find('.mail-log-headers-content').html(response.data.headers);
+                    messageWrapper.show();
+                } else {
+                    detailsRow.find('.mail-log-message-content').html(
+                        '<p style="color: red;">' + (response.data.message || '<?php _e('Error loading message', 'snn'); ?>') + '</p>'
+                    );
+                    messageWrapper.show();
+                }
+            },
+            error: function() {
+                loadingDiv.hide();
+                detailsRow.find('.mail-log-message-content').html(
+                    '<p style="color: red;"><?php _e('Error loading message', 'snn'); ?></p>'
+                );
+                messageWrapper.show();
+            }
+        });
+    });
+    
+    // Close message button click
+    $('.snn-close-message').on('click', function() {
+        $(this).closest('.mail-log-details').hide();
+    });
+});
+</script>
 <?php
 }
 ?>

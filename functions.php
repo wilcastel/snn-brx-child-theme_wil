@@ -1,4 +1,4 @@
-<?php                                                                      
+<?php                        
 // DO NOT TOUCH THIS FILE 
 
 
@@ -40,8 +40,6 @@ require_once SNN_PATH . 'includes/custom-code-snippets.php';
 require_once SNN_PATH . 'includes/cookie-banner.php';
 require_once SNN_PATH . 'includes/accessibility-settings.php';
 require_once SNN_PATH . 'includes/activity-logs.php';
-require_once get_stylesheet_directory() . '/contador-visitas.php';
-
 
 // require_once SNN_PATH . 'includes/ai.php';
 require_once SNN_PATH . 'includes/ai/ai-settings.php';
@@ -50,6 +48,7 @@ require_once SNN_PATH . 'includes/ai/ai-overlay.php';
 require_once SNN_PATH . 'includes/ai/ai-design.php';
 
 require_once SNN_PATH . 'includes/block-editor-settings.php';
+require_once SNN_PATH . 'includes/wp-admin-image-opt.php';
 
 
 // Register Custom Dynamic Data Tags
@@ -62,7 +61,8 @@ require_once SNN_PATH . 'includes/dynamic-data-tags/custom-field-repeater-first-
 
 // Utils
 require_once SNN_PATH . 'includes/utils.php';
-require_once SNN_PATH . 'includes/auto-update-snn-brx-github.php';
+require_once SNN_PATH . 'includes/auto-update-snn-brx-wil-github.php';
+require_once SNN_PATH . 'includes/query/snn-repeaters-and-queries.php';
 
 // Register Custom Bricks Builder Elements
 add_action('init', function () {
@@ -120,3 +120,5 @@ if (!empty($options['enqueue_gsap'])) {
 
 
 
+// Load Translations
+load_theme_textdomain('snn', SNN_PATH . '/languages');
