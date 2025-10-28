@@ -1,0 +1,79 @@
+/*
+ * SNN-BRX-WIL Theme Specific Styles
+ * 
+ * Solo estilos específicos del tema que no están en Tailwind
+ * WindPress maneja Tailwind v4 para Bricks Builder
+ * 
+ * @package SNN-BRX-WIL
+ * @since 1.0.0
+ */
+
+/* ========================================
+   ESTILOS ESPECÍFICOS DEL TEMA
+   ======================================== */
+
+/* Contenedor de anuncios */
+.contenedor-ad {
+    width: 100%;
+    max-width: 768px !important;
+    margin: auto;
+}
+
+/* Wrapper general */
+.wrapper {
+    margin-left: auto;
+    margin-right: auto;
+    width: 90%;
+    max-width: 1280px;
+}
+
+/* Utilidades de flexbox específicas */
+.flexo {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+}
+
+/* Utilidades de altura específicas */
+.h400 {
+    height: 480px;
+}
+
+/* Utilidades de flex basis específicas */
+.basis300 {
+    flex-basis: 300px;
+}
+
+/* Botones de CTA específicos */
+.btn_cta {
+    margin-top: 0.5rem;
+    margin-bottom: 0.5rem;
+    text-align: center;
+    font-family: Anton, Arial, sans-serif;
+    text-transform: uppercase;
+}
+
+/* ========================================
+   OVERRIDES MÍNIMOS PARA CORE WEB VITALS
+   ======================================== */
+
+/* Asegurar que las imágenes no causen CLS */
+img {
+    max-width: 100%;
+    height: auto;
+}
+
+/* Mejorar renderizado de fuentes */
+body {
+    font-display: swap;
+}
+
+/* Optimizar scroll para mejor UX */
+html {
+    scroll-behavior: smooth;
+}
+
+/* Ocultar elementos con x-cloak */
+[x-cloak] { 
+    display: none !important; 
+}

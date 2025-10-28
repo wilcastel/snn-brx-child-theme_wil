@@ -2,7 +2,23 @@
 
 add_action('wp_enqueue_scripts', function () {
   if (!bricks_is_builder_main()) {
-    wp_enqueue_style('bricks-child', get_stylesheet_uri(), ['bricks-frontend'], filemtime(SNN_PATH . 'style.css')); 
+    // Cargar estilos específicos del tema (mínimos para Core Web Vitals)
+    wp_enqueue_style(
+      'snn-theme-specific', 
+      SNN_URL . 'assets/css/snn-theme-specific.css', 
+      ['bricks-frontend'], 
+      filemtime(SNN_PATH . 'assets/css/snn-theme-specific.css')
+    );
+    
+    // Cargar estilos del rich text editor si están habilitados
+    if (get_option('snn_other_options')['enable_rich_text_editor'] ?? false) {
+      wp_enqueue_style(
+        'snn-rich-text-editor', 
+        SNN_URL . 'assets/css/snn-rich-text-editor.css', 
+        ['snn-theme-specific'], 
+        filemtime(SNN_PATH . 'assets/css/snn-rich-text-editor.css')
+      );
+    }
   }
 });
 
