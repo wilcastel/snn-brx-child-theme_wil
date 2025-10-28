@@ -632,36 +632,32 @@ function snn_get_accurate_image_count() {
 }
 
 /**
- * Count WebP images
+ * Count WebP images (All locations)
  */
 function snn_count_webp_images() {
     $upload_dir = wp_upload_dir();
-    $webp_dir = $upload_dir['basedir'] . '/webp/';
+    $upload_basedir = $upload_dir['basedir'];
     
-    if (!file_exists($webp_dir)) {
-        return 0;
-    }
+    // Count WebP files in uploads directory recursively
+    $files = glob($upload_basedir . '/**/*.webp', GLOB_BRACE);
     
-    $files = glob($webp_dir . '*.webp');
     return count($files);
 }
 
 /**
- * Calculate saved space
+ * Calculate saved space (All WebP files)
  */
 function snn_calculate_saved_space() {
     $upload_dir = wp_upload_dir();
-    $webp_dir = $upload_dir['basedir'] . '/webp/';
-    
-    if (!file_exists($webp_dir)) {
-        return '0 MB';
-    }
+    $upload_basedir = $upload_dir['basedir'];
     
     $total_size = 0;
-    $files = glob($webp_dir . '*.webp');
+    $files = glob($upload_basedir . '/**/*.webp', GLOB_BRACE);
     
     foreach ($files as $file) {
-        $total_size += filesize($file);
+        if (file_exists($file)) {
+            $total_size += filesize($file);
+        }
     }
     
     return size_format($total_size);

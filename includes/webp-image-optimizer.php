@@ -51,6 +51,8 @@ class SNN_WebP_Image_Optimizer {
         // Automatic WebP serving
         add_action('template_redirect', array($this, 'serve_webp_images'));
         add_filter('wp_get_attachment_url', array($this, 'replace_attachment_url_with_webp'), 10, 2);
+        add_action('init', array($this, 'handle_image_requests'));
+        add_filter('wp_calculate_image_srcset', array($this, 'replace_srcset_with_webp'), 10, 5);
         
         // Admin hooks
         add_action('admin_init', array($this, 'register_settings'));
@@ -145,7 +147,7 @@ class SNN_WebP_Image_Optimizer {
     }
     
     /**
-     * Convert image to WebP format
+     * Convert image to WebP format (Replace original)
      */
     private function convert_image_to_webp($file_path) {
         if (!function_exists('imagewebp')) {
@@ -153,7 +155,7 @@ class SNN_WebP_Image_Optimizer {
         }
         
         $file_info = pathinfo($file_path);
-        $webp_path = $this->webp_dir . $file_info['filename'] . '.webp';
+        $webp_path = $file_info['dirname'] . '/' . $file_info['filename'] . '.webp';
         
         // Skip if WebP already exists and is newer
         if (file_exists($webp_path) && filemtime($webp_path) >= filemtime($file_path)) {
@@ -187,6 +189,12 @@ class SNN_WebP_Image_Optimizer {
         if ($success) {
             // Update file permissions
             chmod($webp_path, 0644);
+            
+            // Remove original file to save space
+            if ($file_path !== $webp_path) {
+                unlink($file_path);
+            }
+            
             return $webp_path;
         }
         
@@ -289,29 +297,6 @@ class SNN_WebP_Image_Optimizer {
     }
     
     /**
-     * Get WebP URL for given image URL
-     */
-    private function get_webp_url($image_url) {
-        $upload_url = $this->upload_dir['baseurl'];
-        
-        // Check if image is from uploads directory
-        if (strpos($image_url, $upload_url) !== 0) {
-            return false;
-        }
-        
-        $relative_path = str_replace($upload_url, '', $image_url);
-        $file_info = pathinfo($relative_path);
-        
-        $webp_path = $this->webp_dir . $file_info['filename'] . '.webp';
-        
-        if (file_exists($webp_path)) {
-            return $upload_url . '/webp/' . $file_info['filename'] . '.webp';
-        }
-        
-        return false;
-    }
-    
-    /**
      * Preload critical images
      */
     public function preload_critical_images() {
@@ -398,7 +383,7 @@ class SNN_WebP_Image_Optimizer {
     }
     
     /**
-     * Serve WebP images automatically
+     * Serve WebP images automatically (Enhanced)
      */
     public function serve_webp_images() {
         // Only serve WebP for image requests
@@ -413,18 +398,62 @@ class SNN_WebP_Image_Optimizer {
             return;
         }
         
-        // Check if WebP version exists
-        $webp_uri = preg_replace('/\.(jpg|jpeg|png)$/i', '.webp', $request_uri);
-        $webp_path = ABSPATH . ltrim($webp_uri, '/');
+        // Try multiple WebP locations
+        $webp_paths = $this->get_webp_paths($request_uri);
         
-        if (file_exists($webp_path)) {
-            // Serve WebP with proper headers
-            header('Content-Type: image/webp');
-            header('Content-Length: ' . filesize($webp_path));
-            header('Cache-Control: public, max-age=31536000');
+        foreach ($webp_paths as $webp_path) {
+            if (file_exists($webp_path)) {
+                // Serve WebP with proper headers
+                header('Content-Type: image/webp');
+                header('Content-Length: ' . filesize($webp_path));
+                header('Cache-Control: public, max-age=31536000');
+                header('X-WebP-Served: true');
+                
+                readfile($webp_path);
+                exit;
+            }
+        }
+    }
+    
+    /**
+     * Get possible WebP paths for an image request (Same location)
+     */
+    private function get_webp_paths($request_uri) {
+        $webp_paths = array();
+        
+        // Extract filename from URI
+        $path_info = pathinfo($request_uri);
+        $filename = $path_info['filename'];
+        $dirname = $path_info['dirname'];
+        
+        // Try different WebP locations (same directory priority)
+        $possible_paths = array(
+            // In same directory as original (preferred)
+            ABSPATH . ltrim($dirname, '/') . '/' . $filename . '.webp',
             
-            readfile($webp_path);
-            exit;
+            // Direct WebP conversion
+            ABSPATH . ltrim(preg_replace('/\.(jpg|jpeg|png)$/i', '.webp', $request_uri), '/'),
+            
+            // In uploads directory
+            $this->upload_dir['basedir'] . ltrim($dirname, '/') . '/' . $filename . '.webp',
+        );
+        
+        return $possible_paths;
+    }
+    
+    /**
+     * Handle image requests early
+     */
+    public function handle_image_requests() {
+        if (!isset($_SERVER['REQUEST_URI'])) {
+            return;
+        }
+        
+        $request_uri = $_SERVER['REQUEST_URI'];
+        
+        // Check if it's an image request
+        if (preg_match('/\.(jpg|jpeg|png)$/i', $request_uri)) {
+            $this->serve_webp_images();
         }
     }
     
@@ -446,7 +475,25 @@ class SNN_WebP_Image_Optimizer {
     }
     
     /**
-     * Enhanced WebP URL detection
+     * Replace srcset with WebP versions
+     */
+    public function replace_srcset_with_webp($sources, $size_array, $image_src, $image_meta, $attachment_id) {
+        if (!($this->options['enable_webp'] ?? true)) {
+            return $sources;
+        }
+        
+        foreach ($sources as $width => $source) {
+            $webp_url = $this->get_webp_url($source['url']);
+            if ($webp_url) {
+                $sources[$width]['url'] = $webp_url;
+            }
+        }
+        
+        return $sources;
+    }
+    
+    /**
+     * Enhanced WebP URL detection (Same location)
      */
     private function get_webp_url($image_url) {
         $upload_url = $this->upload_dir['baseurl'];
@@ -459,11 +506,11 @@ class SNN_WebP_Image_Optimizer {
         $relative_path = str_replace($upload_url, '', $image_url);
         $file_info = pathinfo($relative_path);
         
-        // Check for WebP version
-        $webp_path = $this->webp_dir . $file_info['filename'] . '.webp';
+        // Check for WebP version in same location
+        $webp_path = $this->upload_dir['basedir'] . $file_info['dirname'] . '/' . $file_info['filename'] . '.webp';
         
         if (file_exists($webp_path)) {
-            return $upload_url . '/webp/' . $file_info['filename'] . '.webp';
+            return $upload_url . $file_info['dirname'] . '/' . $file_info['filename'] . '.webp';
         }
         
         return false;
