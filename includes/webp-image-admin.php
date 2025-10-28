@@ -29,6 +29,17 @@ function snn_render_webp_optimization_page() {
     $webp_images = snn_count_webp_images();
     $saved_space = snn_calculate_saved_space();
     
+    // Calculate conversion rate properly
+    $conversion_rate = 0;
+    if ($total_count > 0) {
+        $conversion_rate = round(($webp_images / $total_count) * 100, 1);
+    } else if ($webp_images > 0) {
+        // If total is 0 but we have WebP images, there might be an issue with wp_count_attachments
+        // Let's get a more accurate count
+        $total_count = snn_get_accurate_image_count();
+        $conversion_rate = $total_count > 0 ? round(($webp_images / $total_count) * 100, 1) : 0;
+    }
+    
     ?>
     <div class="wrap">
         <h1><?php _e('WebP Image Optimization', 'snn'); ?></h1>
@@ -600,6 +611,24 @@ function snn_render_webp_optimization_page() {
     });
     </script>
     <?php
+}
+
+/**
+ * Get accurate image count
+ */
+function snn_get_accurate_image_count() {
+    global $wpdb;
+    
+    // Get count of all image attachments
+    $count = $wpdb->get_var("
+        SELECT COUNT(*) 
+        FROM {$wpdb->posts} 
+        WHERE post_type = 'attachment' 
+        AND post_mime_type LIKE 'image/%'
+        AND post_status = 'inherit'
+    ");
+    
+    return intval($count);
 }
 
 /**

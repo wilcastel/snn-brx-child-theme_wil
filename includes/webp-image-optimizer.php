@@ -618,14 +618,31 @@ class SNN_WebP_Image_Optimizer {
      * Calculate progress percentage
      */
     private function calculate_progress_percent($processed) {
-        $total_images = wp_count_attachments('image');
-        $total_count = ($total_images->inherit ?? 0) + ($total_images->private ?? 0) + ($total_images->trash ?? 0);
+        // Use more accurate count
+        $total_count = $this->get_accurate_image_count();
         
         if ($total_count == 0) {
             return 100;
         }
         
         return round(($processed / $total_count) * 100, 1);
+    }
+    
+    /**
+     * Get accurate image count
+     */
+    private function get_accurate_image_count() {
+        global $wpdb;
+        
+        $count = $wpdb->get_var("
+            SELECT COUNT(*) 
+            FROM {$wpdb->posts} 
+            WHERE post_type = 'attachment' 
+            AND post_mime_type LIKE 'image/%'
+            AND post_status = 'inherit'
+        ");
+        
+        return intval($count);
     }
     
     /**
