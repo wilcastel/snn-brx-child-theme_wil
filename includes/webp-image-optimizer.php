@@ -52,6 +52,13 @@ class SNN_WebP_Image_Optimizer {
         add_action('admin_init', array($this, 'register_settings'));
         add_action('wp_ajax_snn_convert_images', array($this, 'convert_images_ajax'));
         add_action('wp_ajax_snn_optimize_images', array($this, 'optimize_images_ajax'));
+        add_action('wp_ajax_snn_start_background_conversion', array($this, 'start_background_conversion'));
+        add_action('wp_ajax_snn_get_conversion_status', array($this, 'get_conversion_status'));
+        
+        // WP Cron hooks for background processing
+        add_action('snn_webp_background_conversion', array($this, 'process_background_conversion'));
+        add_action('init', array($this, 'schedule_background_conversion'));
+        add_filter('cron_schedules', array($this, 'add_cron_intervals'));
         
         // Lazy loading
         add_filter('wp_get_attachment_image_attributes', array($this, 'add_lazy_loading'), 10, 3);
@@ -441,6 +448,14 @@ class SNN_WebP_Image_Optimizer {
             'snn-webp-optimization',
             'snn_webp_general'
         );
+        
+        add_settings_field(
+            'batch_size',
+            __('Batch Size for Conversion', 'snn'),
+            array($this, 'batch_size_callback'),
+            'snn-webp-optimization',
+            'snn_webp_general'
+        );
     }
     
     /**
@@ -501,6 +516,12 @@ class SNN_WebP_Image_Optimizer {
         echo '<p class="description">' . __('Add critical image URLs to preload (one per line).', 'snn') . '</p>';
     }
     
+    public function batch_size_callback() {
+        $batch_size = $this->options['batch_size'] ?? 50;
+        echo '<input type="number" name="snn_webp_options[batch_size]" value="' . esc_attr($batch_size) . '" min="10" max="200" />';
+        echo '<p class="description">' . __('Number of images to process per batch (10-200). Lower values for better performance with thousands of images.', 'snn') . '</p>';
+    }
+    
     /**
      * Sanitize options
      */
@@ -515,12 +536,13 @@ class SNN_WebP_Image_Optimizer {
         $sanitized['enable_lazy_loading'] = isset($input['enable_lazy_loading']) ? 1 : 0;
         $sanitized['enable_placeholder'] = isset($input['enable_placeholder']) ? 1 : 0;
         $sanitized['critical_images'] = sanitize_textarea_field($input['critical_images'] ?? '');
+        $sanitized['batch_size'] = intval($input['batch_size'] ?? 50);
         
         return $sanitized;
     }
     
     /**
-     * Convert images via AJAX
+     * Convert images via AJAX (Batch Processing)
      */
     public function convert_images_ajax() {
         if (!wp_verify_nonce($_POST['nonce'], 'snn_webp_nonce')) {
@@ -531,35 +553,249 @@ class SNN_WebP_Image_Optimizer {
             wp_die('Insufficient permissions');
         }
         
-        $converted = 0;
-        $errors = 0;
+        $batch_size = intval($_POST['batch_size'] ?? 50);
+        $offset = intval($_POST['offset'] ?? 0);
+        $total_processed = intval($_POST['total_processed'] ?? 0);
+        $total_converted = intval($_POST['total_converted'] ?? 0);
+        $total_errors = intval($_POST['total_errors'] ?? 0);
         
-        // Get all images
+        // Get images for this batch
         $images = get_posts(array(
             'post_type' => 'attachment',
             'post_mime_type' => 'image',
-            'numberposts' => -1,
-            'post_status' => 'inherit'
+            'numberposts' => $batch_size,
+            'offset' => $offset,
+            'post_status' => 'inherit',
+            'orderby' => 'ID',
+            'order' => 'ASC'
         ));
+        
+        $batch_converted = 0;
+        $batch_errors = 0;
         
         foreach ($images as $image) {
             $file_path = get_attached_file($image->ID);
             if ($file_path && file_exists($file_path)) {
                 $result = $this->convert_image_to_webp($file_path);
                 if ($result) {
-                    $converted++;
+                    $batch_converted++;
                 } else {
-                    $errors++;
+                    $batch_errors++;
                 }
             }
         }
         
-        wp_send_json_success(array(
-            'message' => 'Image conversion completed',
-            'converted' => $converted,
-            'errors' => $errors,
-            'total' => count($images)
+        $total_processed += count($images);
+        $total_converted += $batch_converted;
+        $total_errors += $batch_errors;
+        
+        // Check if there are more images to process
+        $remaining_images = get_posts(array(
+            'post_type' => 'attachment',
+            'post_mime_type' => 'image',
+            'numberposts' => 1,
+            'offset' => $offset + $batch_size,
+            'post_status' => 'inherit'
         ));
+        
+        $has_more = !empty($remaining_images);
+        
+        wp_send_json_success(array(
+            'message' => $has_more ? 'Batch processed' : 'All images processed',
+            'batch_converted' => $batch_converted,
+            'batch_errors' => $batch_errors,
+            'batch_processed' => count($images),
+            'total_converted' => $total_converted,
+            'total_errors' => $total_errors,
+            'total_processed' => $total_processed,
+            'has_more' => $has_more,
+            'next_offset' => $offset + $batch_size,
+            'progress_percent' => $this->calculate_progress_percent($total_processed)
+        ));
+    }
+    
+    /**
+     * Calculate progress percentage
+     */
+    private function calculate_progress_percent($processed) {
+        $total_images = wp_count_attachments('image');
+        $total_count = ($total_images->inherit ?? 0) + ($total_images->private ?? 0) + ($total_images->trash ?? 0);
+        
+        if ($total_count == 0) {
+            return 100;
+        }
+        
+        return round(($processed / $total_count) * 100, 1);
+    }
+    
+    /**
+     * Start background conversion
+     */
+    public function start_background_conversion() {
+        if (!wp_verify_nonce($_POST['nonce'], 'snn_webp_nonce')) {
+            wp_die('Invalid nonce');
+        }
+        
+        if (!current_user_can('manage_options')) {
+            wp_die('Insufficient permissions');
+        }
+        
+        // Clear any existing conversion status
+        delete_option('snn_webp_conversion_status');
+        
+        // Schedule the first batch
+        wp_schedule_single_event(time(), 'snn_webp_background_conversion');
+        
+        wp_send_json_success(array(
+            'message' => 'Background conversion started',
+            'status' => 'running'
+        ));
+    }
+    
+    /**
+     * Get conversion status
+     */
+    public function get_conversion_status() {
+        if (!wp_verify_nonce($_POST['nonce'], 'snn_webp_nonce')) {
+            wp_die('Invalid nonce');
+        }
+        
+        if (!current_user_can('manage_options')) {
+            wp_die('Insufficient permissions');
+        }
+        
+        $status = get_option('snn_webp_conversion_status', array(
+            'status' => 'idle',
+            'total_processed' => 0,
+            'total_converted' => 0,
+            'total_errors' => 0,
+            'progress_percent' => 0,
+            'current_batch' => 0,
+            'total_batches' => 0
+        ));
+        
+        wp_send_json_success($status);
+    }
+    
+    /**
+     * Schedule background conversion
+     */
+    public function schedule_background_conversion() {
+        // Only schedule if not already scheduled
+        if (!wp_next_scheduled('snn_webp_background_conversion')) {
+            // Schedule to run every 5 minutes during conversion
+            wp_schedule_event(time(), 'snn_webp_background_conversion_interval', 'snn_webp_background_conversion');
+        }
+    }
+    
+    /**
+     * Process background conversion
+     */
+    public function process_background_conversion() {
+        $status = get_option('snn_webp_conversion_status', array(
+            'status' => 'idle',
+            'total_processed' => 0,
+            'total_converted' => 0,
+            'total_errors' => 0,
+            'current_batch' => 0,
+            'total_batches' => 0,
+            'last_processed_id' => 0
+        ));
+        
+        if ($status['status'] !== 'running') {
+            return;
+        }
+        
+        $batch_size = $this->options['batch_size'] ?? 50;
+        
+        // Get images for this batch
+        $images = get_posts(array(
+            'post_type' => 'attachment',
+            'post_mime_type' => 'image',
+            'numberposts' => $batch_size,
+            'post_status' => 'inherit',
+            'orderby' => 'ID',
+            'order' => 'ASC',
+            'meta_query' => array(
+                array(
+                    'key' => '_snn_webp_converted',
+                    'compare' => 'NOT EXISTS'
+                )
+            )
+        ));
+        
+        if (empty($images)) {
+            // No more images to process
+            $status['status'] = 'completed';
+            $status['progress_percent'] = 100;
+            update_option('snn_webp_conversion_status', $status);
+            
+            // Clear the scheduled event
+            wp_clear_scheduled_hook('snn_webp_background_conversion');
+            return;
+        }
+        
+        $batch_converted = 0;
+        $batch_errors = 0;
+        
+        foreach ($images as $image) {
+            $file_path = get_attached_file($image->ID);
+            if ($file_path && file_exists($file_path)) {
+                $result = $this->convert_image_to_webp($file_path);
+                if ($result) {
+                    $batch_converted++;
+                    // Mark as converted
+                    update_post_meta($image->ID, '_snn_webp_converted', time());
+                } else {
+                    $batch_errors++;
+                }
+            }
+        }
+        
+        // Update status
+        $status['total_processed'] += count($images);
+        $status['total_converted'] += $batch_converted;
+        $status['total_errors'] += $batch_errors;
+        $status['current_batch']++;
+        $status['progress_percent'] = $this->calculate_progress_percent($status['total_processed']);
+        
+        update_option('snn_webp_conversion_status', $status);
+        
+        // Schedule next batch if there are more images
+        $remaining_images = get_posts(array(
+            'post_type' => 'attachment',
+            'post_mime_type' => 'image',
+            'numberposts' => 1,
+            'post_status' => 'inherit',
+            'meta_query' => array(
+                array(
+                    'key' => '_snn_webp_converted',
+                    'compare' => 'NOT EXISTS'
+                )
+            )
+        ));
+        
+        if (!empty($remaining_images)) {
+            // Schedule next batch in 30 seconds
+            wp_schedule_single_event(time() + 30, 'snn_webp_background_conversion');
+        } else {
+            // No more images, mark as completed
+            $status['status'] = 'completed';
+            $status['progress_percent'] = 100;
+            update_option('snn_webp_conversion_status', $status);
+        }
+    }
+    
+    /**
+     * Add custom cron intervals
+     */
+    public function add_cron_intervals($schedules) {
+        $schedules['snn_webp_background_conversion_interval'] = array(
+            'interval' => 300, // 5 minutes
+            'display' => __('WebP Background Conversion', 'snn')
+        );
+        
+        return $schedules;
     }
     
     /**

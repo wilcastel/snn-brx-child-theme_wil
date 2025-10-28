@@ -65,6 +65,10 @@ function snn_render_webp_optimization_page() {
                         <?php _e('Convert All Images to WebP', 'snn'); ?>
                     </button>
                     
+                    <button id="start-background-conversion" class="button button-primary" style="background: #10b981; border-color: #10b981;">
+                        <?php _e('Start Background Conversion', 'snn'); ?>
+                    </button>
+                    
                     <button id="optimize-images" class="button button-secondary">
                         <?php _e('Optimize Images', 'snn'); ?>
                     </button>
@@ -201,6 +205,81 @@ function snn_render_webp_optimization_page() {
         margin-bottom: 8px;
     }
     
+    /* Progress Bar Styles */
+    .snn-progress-container {
+        background: #f0f8ff;
+        padding: 20px;
+        border-radius: 8px;
+        border-left: 4px solid #2271b1;
+        margin: 20px 0;
+    }
+    
+    .snn-progress-bar {
+        width: 100%;
+        height: 20px;
+        background: #e5e7eb;
+        border-radius: 10px;
+        overflow: hidden;
+        margin-bottom: 10px;
+    }
+    
+    .snn-progress-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #2271b1, #10b981);
+        border-radius: 10px;
+        transition: width 0.3s ease-in-out;
+        position: relative;
+    }
+    
+    .snn-progress-fill::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+        animation: shimmer 2s infinite;
+    }
+    
+    @keyframes shimmer {
+        0% { transform: translateX(-100%); }
+        100% { transform: translateX(100%); }
+    }
+    
+    .snn-progress-text {
+        text-align: center;
+        font-weight: bold;
+        color: #2271b1;
+        margin-bottom: 15px;
+    }
+    
+    .snn-progress-actions {
+        text-align: center;
+    }
+    
+    .snn-progress-actions .button {
+        margin: 0 5px;
+    }
+    
+    .snn-progress-info {
+        background: #f8f9fa;
+        padding: 15px;
+        border-radius: 4px;
+        margin-top: 10px;
+        border-left: 3px solid #10b981;
+    }
+    
+    .snn-progress-info p {
+        margin: 5px 0;
+        font-size: 14px;
+    }
+    
+    .snn-progress-info p:first-child {
+        font-weight: bold;
+        color: #10b981;
+    }
+    
     @media (max-width: 768px) {
         .snn-webp-optimization-admin {
             grid-template-columns: 1fr;
@@ -218,38 +297,232 @@ function snn_render_webp_optimization_page() {
     
     <script>
     jQuery(document).ready(function($) {
+        let conversionState = {
+            isRunning: false,
+            totalProcessed: 0,
+            totalConverted: 0,
+            totalErrors: 0,
+            currentOffset: 0,
+            batchSize: <?php echo intval(get_option('snn_webp_options')['batch_size'] ?? 50); ?>
+        };
+        
         $('#convert-images').on('click', function() {
-            const button = $(this);
+            if (conversionState.isRunning) {
+                stopConversion();
+                return;
+            }
+            
+            startConversion();
+        });
+        
+        function startConversion() {
+            const button = $('#convert-images');
+            
+            conversionState.isRunning = true;
+            conversionState.totalProcessed = 0;
+            conversionState.totalConverted = 0;
+            conversionState.totalErrors = 0;
+            conversionState.currentOffset = 0;
             
             button.prop('disabled', true).text('<?php _e('Converting...', 'snn'); ?>');
             $('#webp-results').hide();
+            
+            // Show progress bar
+            showProgressBar();
+            
+            processBatch();
+        }
+        
+        function stopConversion() {
+            conversionState.isRunning = false;
+            const button = $('#convert-images');
+            button.prop('disabled', false).text('<?php _e('Convert All Images to WebP', 'snn'); ?>');
+            
+            showWebPResults('warning', '<?php _e('Conversion stopped by user', 'snn'); ?>');
+        }
+        
+        function processBatch() {
+            if (!conversionState.isRunning) {
+                return;
+            }
             
             $.ajax({
                 url: ajaxurl,
                 type: 'POST',
                 data: {
                     action: 'snn_convert_images',
-                    nonce: '<?php echo wp_create_nonce('snn_webp_nonce'); ?>'
+                    nonce: '<?php echo wp_create_nonce('snn_webp_nonce'); ?>',
+                    batch_size: conversionState.batchSize,
+                    offset: conversionState.currentOffset,
+                    total_processed: conversionState.totalProcessed,
+                    total_converted: conversionState.totalConverted,
+                    total_errors: conversionState.totalErrors
                 },
                 success: function(response) {
                     if (response.success) {
-                        const message = response.data.message + 
-                            '<br><strong><?php _e('Converted:', 'snn'); ?></strong> ' + response.data.converted +
-                            '<br><strong><?php _e('Errors:', 'snn'); ?></strong> ' + response.data.errors +
-                            '<br><strong><?php _e('Total:', 'snn'); ?></strong> ' + response.data.total;
-                        showWebPResults('success', message);
+                        // Update state
+                        conversionState.totalProcessed = response.data.total_processed;
+                        conversionState.totalConverted = response.data.total_converted;
+                        conversionState.totalErrors = response.data.total_errors;
+                        conversionState.currentOffset = response.data.next_offset;
+                        
+                        // Update progress
+                        updateProgress(response.data.progress_percent);
+                        
+                        if (response.data.has_more) {
+                            // Continue with next batch
+                            setTimeout(processBatch, 100); // Small delay to prevent server overload
+                        } else {
+                            // Conversion completed
+                            completeConversion();
+                        }
                     } else {
                         showWebPResults('error', '<?php _e('Failed to convert images', 'snn'); ?>');
+                        stopConversion();
                     }
                 },
                 error: function() {
                     showWebPResults('error', '<?php _e('An error occurred while converting images', 'snn'); ?>');
+                    stopConversion();
+                }
+            });
+        }
+        
+        function completeConversion() {
+            conversionState.isRunning = false;
+            const button = $('#convert-images');
+            button.prop('disabled', false).text('<?php _e('Convert All Images to WebP', 'snn'); ?>');
+            
+            const message = '<?php _e('Conversion completed!', 'snn'); ?>' + 
+                '<br><strong><?php _e('Total Processed:', 'snn'); ?></strong> ' + conversionState.totalProcessed.toLocaleString() +
+                '<br><strong><?php _e('Converted:', 'snn'); ?></strong> ' + conversionState.totalConverted.toLocaleString() +
+                '<br><strong><?php _e('Errors:', 'snn'); ?></strong> ' + conversionState.totalErrors.toLocaleString();
+            
+            showWebPResults('success', message);
+            hideProgressBar();
+        }
+        
+        function showProgressBar() {
+            const progressHtml = `
+                <div id="conversion-progress" class="snn-progress-container">
+                    <div class="snn-progress-bar">
+                        <div class="snn-progress-fill" style="width: 0%"></div>
+                    </div>
+                    <div class="snn-progress-text">
+                        <span id="progress-percent">0%</span> - 
+                        <span id="progress-stats"><?php _e('Starting...', 'snn'); ?></span>
+                    </div>
+                    <div class="snn-progress-actions">
+                        <button id="stop-conversion" class="button button-secondary"><?php _e('Stop Conversion', 'snn'); ?></button>
+                    </div>
+                </div>
+            `;
+            
+            $('#webp-results').html(progressHtml).show();
+            
+            $('#stop-conversion').on('click', function() {
+                stopConversion();
+            });
+        }
+        
+        function updateProgress(percent) {
+            $('.snn-progress-fill').css('width', percent + '%');
+            $('#progress-percent').text(percent + '%');
+            $('#progress-stats').text(
+                conversionState.totalProcessed.toLocaleString() + ' <?php _e('processed', 'snn'); ?> | ' +
+                conversionState.totalConverted.toLocaleString() + ' <?php _e('converted', 'snn'); ?> | ' +
+                conversionState.totalErrors.toLocaleString() + ' <?php _e('errors', 'snn'); ?>'
+            );
+        }
+        
+        function hideProgressBar() {
+            $('#conversion-progress').remove();
+        }
+        
+        // Background conversion
+        $('#start-background-conversion').on('click', function() {
+            const button = $(this);
+            
+            button.prop('disabled', true).text('<?php _e('Starting...', 'snn'); ?>');
+            
+            $.ajax({
+                url: ajaxurl,
+                type: 'POST',
+                data: {
+                    action: 'snn_start_background_conversion',
+                    nonce: '<?php echo wp_create_nonce('snn_webp_nonce'); ?>'
+                },
+                success: function(response) {
+                    if (response.success) {
+                        showWebPResults('success', '<?php _e('Background conversion started! Check back in a few minutes.', 'snn'); ?>');
+                        startStatusPolling();
+                    } else {
+                        showWebPResults('error', '<?php _e('Failed to start background conversion', 'snn'); ?>');
+                    }
+                },
+                error: function() {
+                    showWebPResults('error', '<?php _e('An error occurred while starting background conversion', 'snn'); ?>');
                 },
                 complete: function() {
-                    button.prop('disabled', false).text('<?php _e('Convert All Images to WebP', 'snn'); ?>');
+                    button.prop('disabled', false).text('<?php _e('Start Background Conversion', 'snn'); ?>');
                 }
             });
         });
+        
+        function startStatusPolling() {
+            const statusInterval = setInterval(function() {
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'snn_get_conversion_status',
+                        nonce: '<?php echo wp_create_nonce('snn_webp_nonce'); ?>'
+                    },
+                    success: function(response) {
+                        if (response.success) {
+                            const status = response.data;
+                            
+                            if (status.status === 'completed') {
+                                clearInterval(statusInterval);
+                                showWebPResults('success', 
+                                    '<?php _e('Background conversion completed!', 'snn'); ?>' +
+                                    '<br><strong><?php _e('Total Processed:', 'snn'); ?></strong> ' + status.total_processed.toLocaleString() +
+                                    '<br><strong><?php _e('Converted:', 'snn'); ?></strong> ' + status.total_converted.toLocaleString() +
+                                    '<br><strong><?php _e('Errors:', 'snn'); ?></strong> ' + status.total_errors.toLocaleString()
+                                );
+                            } else if (status.status === 'running') {
+                                showBackgroundProgress(status);
+                            }
+                        }
+                    }
+                });
+            }, 5000); // Poll every 5 seconds
+        }
+        
+        function showBackgroundProgress(status) {
+            const progressHtml = `
+                <div id="background-progress" class="snn-progress-container">
+                    <div class="snn-progress-bar">
+                        <div class="snn-progress-fill" style="width: ${status.progress_percent}%"></div>
+                    </div>
+                    <div class="snn-progress-text">
+                        <span id="background-progress-percent">${status.progress_percent}%</span> - 
+                        <span id="background-progress-stats">
+                            ${status.total_processed.toLocaleString()} <?php _e('processed', 'snn'); ?> | 
+                            ${status.total_converted.toLocaleString()} <?php _e('converted', 'snn'); ?> | 
+                            ${status.total_errors.toLocaleString()} <?php _e('errors', 'snn'); ?>
+                        </span>
+                    </div>
+                    <div class="snn-progress-info">
+                        <p><strong><?php _e('Background Conversion Running', 'snn'); ?></strong></p>
+                        <p><?php _e('This process runs in the background and will continue even if you close this page.', 'snn'); ?></p>
+                        <p><?php _e('Batch', 'snn'); ?> ${status.current_batch} - <?php _e('Progress updates every 5 seconds', 'snn'); ?></p>
+                    </div>
+                </div>
+            `;
+            
+            $('#webp-results').html(progressHtml).show();
+        }
         
         $('#optimize-images').on('click', function() {
             const button = $(this);
