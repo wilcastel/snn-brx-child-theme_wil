@@ -60,6 +60,8 @@ class SNN_WebP_Image_Optimizer {
         add_action('wp_ajax_snn_optimize_images', array($this, 'optimize_images_ajax'));
         add_action('wp_ajax_snn_start_background_conversion', array($this, 'start_background_conversion'));
         add_action('wp_ajax_snn_get_conversion_status', array($this, 'get_conversion_status'));
+        add_action('wp_ajax_snn_test_conversion', array($this, 'test_conversion_ajax'));
+        add_action('wp_ajax_snn_convert_folder', array($this, 'convert_folder_ajax'));
         
         // WP Cron hooks for background processing
         add_action('snn_webp_background_conversion', array($this, 'process_background_conversion'));
@@ -68,6 +70,51 @@ class SNN_WebP_Image_Optimizer {
         
         // Lazy loading
         add_filter('wp_get_attachment_image_attributes', array($this, 'add_lazy_loading'), 10, 3);
+    }
+
+    /**
+     * Convert all images inside a specific folder (absolute or uploads-relative)
+     */
+    public function convert_folder_ajax() {
+        if (!wp_verify_nonce($_POST['nonce'], 'snn_webp_nonce')) {
+            wp_die('Invalid nonce');
+        }
+        if (!current_user_can('manage_options')) {
+            wp_die('Insufficient permissions');
+        }
+        $folder = isset($_POST['folder']) ? sanitize_text_field(wp_unslash($_POST['folder'])) : '';
+        if ($folder === '') {
+            wp_send_json_error(array('message' => __('Folder is required', 'snn')));
+        }
+        $uploads = wp_upload_dir();
+        $basedir = rtrim($uploads['basedir'], '/\\');
+        // Support uploads-relative paths like /fotoedicion/2025/10
+        if (strpos($folder, ':') === false && strpos($folder, $basedir) !== 0) {
+            $folder = $basedir . '/' . ltrim($folder, '/\\');
+        }
+        $realBase = realpath($basedir);
+        $realFolder = realpath($folder);
+        if ($realFolder === false || strpos($realFolder, $realBase) !== 0) {
+            wp_send_json_error(array('message' => __('Folder must be inside uploads directory', 'snn')));
+        }
+        $processed = 0; $converted = 0; $errors = 0;
+        $iterator = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($realFolder, RecursiveDirectoryIterator::SKIP_DOTS)
+        );
+        foreach ($iterator as $file) {
+            if (!$file->isFile()) { continue; }
+            $ext = strtolower($file->getExtension());
+            if (!in_array($ext, array('jpg','jpeg','png'), true)) { continue; }
+            $processed++;
+            $result = $this->convert_image_to_webp($file->getPathname());
+            if ($result) { $converted++; } else { $errors++; }
+        }
+        wp_send_json_success(array(
+            'processed' => $processed,
+            'converted' => $converted,
+            'errors' => $errors,
+            'folder' => $realFolder,
+        ));
     }
     
     /**
@@ -179,6 +226,14 @@ class SNN_WebP_Image_Optimizer {
             return false;
         }
         
+        // Convert palette images to true color for WebP compatibility
+        if (imageistruecolor($image) === false) {
+            $truecolor_image = imagecreatetruecolor(imagesx($image), imagesy($image));
+            imagecopy($truecolor_image, $image, 0, 0, 0, 0, imagesx($image), imagesy($image));
+            imagedestroy($image);
+            $image = $truecolor_image;
+        }
+        
         // Resize if needed
         $image = $this->resize_image_if_needed($image, $file_path);
         
@@ -190,8 +245,8 @@ class SNN_WebP_Image_Optimizer {
             // Update file permissions
             chmod($webp_path, 0644);
             
-            // Remove original file to save space
-            if ($file_path !== $webp_path) {
+            // Remove original file to save space (always remove original)
+            if (file_exists($file_path)) {
                 unlink($file_path);
             }
             
@@ -1033,6 +1088,66 @@ class SNN_WebP_Image_Optimizer {
             'optimized' => 0,
             'saved_space' => '0 MB'
         ));
+    }
+    
+    /**
+     * Test conversion AJAX handler
+     */
+    public function test_conversion_ajax() {
+        check_ajax_referer('snn_webp_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_die(__('You do not have sufficient permissions.'));
+        }
+        
+        // Get a random image to test
+        $images = get_posts(array(
+            'post_type' => 'attachment',
+            'post_mime_type' => 'image/jpeg',
+            'numberposts' => 1,
+            'post_status' => 'inherit'
+        ));
+        
+        if (empty($images)) {
+            wp_send_json_error(array(
+                'message' => __('No JPEG images found to test conversion.', 'snn')
+            ));
+        }
+        
+        $image = $images[0];
+        $file_path = get_attached_file($image->ID);
+        
+        if (!$file_path || !file_exists($file_path)) {
+            wp_send_json_error(array(
+                'message' => __('Test image file not found.', 'snn')
+            ));
+        }
+        
+        // Test conversion
+        $result = $this->convert_image_to_webp($file_path);
+        
+        if ($result) {
+            // Check if original was removed and WebP was created
+            $webp_exists = file_exists($result);
+            $original_exists = file_exists($file_path);
+            
+            $message = sprintf(
+                __('Test conversion successful! WebP created: %s. Original removed: %s', 'snn'),
+                $webp_exists ? __('Yes', 'snn') : __('No', 'snn'),
+                $original_exists ? __('No', 'snn') : __('Yes', 'snn')
+            );
+            
+            wp_send_json_success(array(
+                'message' => $message,
+                'webp_path' => $result,
+                'webp_exists' => $webp_exists,
+                'original_exists' => $original_exists
+            ));
+        } else {
+            wp_send_json_error(array(
+                'message' => __('Test conversion failed. Check error logs.', 'snn')
+            ));
+        }
     }
 }
 

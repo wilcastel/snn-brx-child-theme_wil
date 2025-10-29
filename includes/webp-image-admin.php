@@ -28,6 +28,8 @@ function snn_render_webp_optimization_page() {
     $total_count = ($total_images->inherit ?? 0) + ($total_images->private ?? 0) + ($total_images->trash ?? 0);
     $webp_images = snn_count_webp_images();
     $saved_space = snn_calculate_saved_space();
+    // Disk-based counts for conversion rate
+    $disk_counts = snn_count_images_on_disk();
     
     // Calculate conversion rate properly
     $conversion_rate = 0;
@@ -62,7 +64,7 @@ function snn_render_webp_optimization_page() {
                         <span class="stat-label"><?php _e('Space Saved', 'snn'); ?></span>
                     </div>
                     <div class="stat-item">
-                        <span class="stat-number"><?php echo round(($webp_images / max($total_count, 1)) * 100, 1); ?>%</span>
+                        <span class="stat-number"><?php echo number_format_i18n($disk_counts['rate'], 1); ?>%</span>
                         <span class="stat-label"><?php _e('Conversion Rate', 'snn'); ?></span>
                     </div>
                 </div>
@@ -72,22 +74,17 @@ function snn_render_webp_optimization_page() {
                 <h2><?php _e('Image Management', 'snn'); ?></h2>
                 
                 <div class="snn-webp-actions-buttons">
-                    <button id="convert-images" class="button button-primary">
-                        <?php _e('Convert All Images to WebP', 'snn'); ?>
-                    </button>
-                    
-                    <button id="start-background-conversion" class="button button-primary" style="background: #10b981; border-color: #10b981;">
-                        <?php _e('Start Background Conversion', 'snn'); ?>
-                    </button>
-                    
-                    <button id="optimize-images" class="button button-secondary">
-                        <?php _e('Optimize Images', 'snn'); ?>
-                    </button>
-                    
-                    <button id="clear-webp" class="button button-secondary" style="color: #d63638;">
-                        <?php _e('Clear WebP Cache', 'snn'); ?>
+                    <input type="text" id="snn-folder-path" class="regular-text" style="min-width:340px" />
+                    <button id="convert-folder" class="button button-primary">
+                        <?php _e('Convert Folder to WebP', 'snn'); ?>
                     </button>
                 </div>
+                <p class="description">
+                    <?php 
+                        $u = wp_upload_dir(); 
+                        echo esc_html( sprintf(__("Absolute path or uploads-relative path. Uploads base: %s", 'snn'), $u['basedir']) );
+                    ?>
+                </p>
                 
                 <div id="webp-results" class="snn-webp-results" style="display: none;">
                     <!-- Results will be shown here -->
@@ -598,6 +595,77 @@ function snn_render_webp_optimization_page() {
             });
         });
         
+        // Convert specific folder
+        $('#convert-folder').on('click', function() {
+            const folderInput = $('#snn-folder-path');
+            const folder = folderInput.val().trim();
+            if (!folder) {
+                showWebPResults('error', '<?php _e('Please enter a folder path', 'snn'); ?>');
+                return;
+            }
+            const button = $(this);
+            button.prop('disabled', true).text('<?php _e('Converting folder...', 'snn'); ?>');
+            
+            showProgressBar();
+            
+            $.ajax({
+                url: ajaxurl,
+                type: 'POST',
+                data: {
+                    action: 'snn_convert_folder',
+                    nonce: '<?php echo wp_create_nonce('snn_webp_nonce'); ?>',
+                    folder
+                },
+                success: function(response) {
+                    if (response.success) {
+                        const d = response.data;
+                        updateProgress(100);
+                        const message = '<?php _e('Folder conversion completed!', 'snn'); ?>' +
+                          '<br><strong><?php _e('Processed:', 'snn'); ?></strong> ' + d.processed.toLocaleString() +
+                          '<br><strong><?php _e('Converted:', 'snn'); ?></strong> ' + d.converted.toLocaleString() +
+                          '<br><strong><?php _e('Errors:', 'snn'); ?></strong> ' + d.errors.toLocaleString();
+                        showWebPResults('success', message);
+                    } else {
+                        showWebPResults('error', response.data?.message || '<?php _e('Failed to convert folder', 'snn'); ?>');
+                    }
+                },
+                error: function() {
+                    showWebPResults('error', '<?php _e('An error occurred while converting folder', 'snn'); ?>');
+                },
+                complete: function() {
+                    hideProgressBar();
+                    button.prop('disabled', false).text('<?php _e('Convert Folder to WebP', 'snn'); ?>');
+                }
+            });
+        });
+        
+        $('#test-conversion').on('click', function() {
+            const button = $(this);
+            button.prop('disabled', true).text('<?php _e('Testing...', 'snn'); ?>');
+            
+            $.ajax({
+                url: ajaxurl,
+                type: 'POST',
+                data: {
+                    action: 'snn_test_conversion',
+                    nonce: '<?php echo wp_create_nonce('snn_webp_nonce'); ?>'
+                },
+                success: function(response) {
+                    if (response.success) {
+                        showWebPResults('success', response.data.message);
+                    } else {
+                        showWebPResults('error', response.data.message || '<?php _e('Test failed', 'snn'); ?>');
+                    }
+                },
+                error: function() {
+                    showWebPResults('error', '<?php _e('An error occurred during test', 'snn'); ?>');
+                },
+                complete: function() {
+                    button.prop('disabled', false).text('<?php _e('Test Single Conversion', 'snn'); ?>');
+                }
+            });
+        });
+        
         function showWebPResults(type, message) {
             const resultClass = type === 'success' ? 'notice-success' : 'notice-error';
             const icon = type === 'success' ? '✅' : '❌';
@@ -628,6 +696,9 @@ function snn_get_accurate_image_count() {
         AND post_status = 'inherit'
     ");
     
+    // Debug: Log the count
+    error_log('SNN WebP Debug - Total images found: ' . $count);
+    
     return intval($count);
 }
 
@@ -638,10 +709,23 @@ function snn_count_webp_images() {
     $upload_dir = wp_upload_dir();
     $upload_basedir = $upload_dir['basedir'];
     
-    // Count WebP files in uploads directory recursively
-    $files = glob($upload_basedir . '/**/*.webp', GLOB_BRACE);
+    // Count WebP files in uploads directory recursively (Windows compatible)
+    $count = 0;
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($upload_basedir, RecursiveDirectoryIterator::SKIP_DOTS)
+    );
     
-    return count($files);
+    foreach ($iterator as $file) {
+        if ($file->isFile() && strtolower($file->getExtension()) === 'webp') {
+            $count++;
+        }
+    }
+    
+    // Debug: Log the count
+    error_log('SNN WebP Debug - WebP files found: ' . $count);
+    error_log('SNN WebP Debug - Upload directory: ' . $upload_basedir);
+    
+    return $count;
 }
 
 /**
@@ -652,13 +736,46 @@ function snn_calculate_saved_space() {
     $upload_basedir = $upload_dir['basedir'];
     
     $total_size = 0;
-    $files = glob($upload_basedir . '/**/*.webp', GLOB_BRACE);
     
-    foreach ($files as $file) {
-        if (file_exists($file)) {
-            $total_size += filesize($file);
+    // Count WebP files and calculate total size (Windows compatible)
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($upload_basedir, RecursiveDirectoryIterator::SKIP_DOTS)
+    );
+    
+    foreach ($iterator as $file) {
+        if ($file->isFile() && strtolower($file->getExtension()) === 'webp') {
+            $total_size += $file->getSize();
         }
     }
     
     return size_format($total_size);
+}
+
+/**
+ * Count images on disk by extension and compute conversion rate
+ */
+function snn_count_images_on_disk() {
+    $upload_dir = wp_upload_dir();
+    $base = $upload_dir['basedir'];
+    $counts = array('jpg'=>0,'jpeg'=>0,'png'=>0,'webp'=>0);
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($base, RecursiveDirectoryIterator::SKIP_DOTS)
+    );
+    foreach ($iterator as $file) {
+        if (!$file->isFile()) { continue; }
+        $ext = strtolower($file->getExtension());
+        if (isset($counts[$ext])) { $counts[$ext]++; }
+    }
+    $originals = $counts['jpg'] + $counts['jpeg'] + $counts['png'];
+    $total = $originals + $counts['webp'];
+    $rate = $total > 0 ? ($counts['webp'] / $total) * 100 : 0;
+    return array(
+        'jpg' => $counts['jpg'],
+        'jpeg' => $counts['jpeg'],
+        'png' => $counts['png'],
+        'webp' => $counts['webp'],
+        'total' => $total,
+        'originals' => $originals,
+        'rate' => round($rate, 1),
+    );
 }
