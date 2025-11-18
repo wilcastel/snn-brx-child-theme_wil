@@ -614,7 +614,8 @@ function snn_enqueue_metabox_scripts($hook_suffix) {
     global $pagenow; 
     
     if (in_array($pagenow, ['post.php','post-new.php'])) {
-        $current_post_type = get_current_screen()->post_type;
+        $current_screen = get_current_screen();
+        $current_post_type = $current_screen ? $current_screen->post_type : 'post';
         $post_type_has_media = false;
         $post_type_has_repeater = false;
         $post_type_has_basic_rich_text = false;
@@ -1721,6 +1722,12 @@ function snn_output_dynamic_field_js() {
                 $filenameDisplay = $('<div class="media-filename"></div>').insertAfter($remove);
             }
 
+            // Verificar que wp.media esté disponible
+            if (typeof wp === 'undefined' || typeof wp.media === 'undefined') {
+                alert('<?php echo esc_js(__('WordPress media library is not available. Please refresh the page.', 'snn')); ?>');
+                return;
+            }
+            
             // If inside a repeater, allow multiple selection
             var allowMultiple = !!$container.length;
             var frame = wp.media({
@@ -1749,7 +1756,12 @@ function snn_output_dynamic_field_js() {
                         $newInput.val(att.id);
 
                         var mimeType = att.mime || '';
-                        var imageURL = (att.sizes && att.sizes.thumbnail) ? att.sizes.thumbnail.url : att.url;
+                        var imageURL = (att.sizes && att.sizes.thumbnail && att.sizes.thumbnail.url) 
+                            ? att.sizes.thumbnail.url 
+                            : (att.url || '');
+                        if (!imageURL) {
+                            return;
+                        }
                         var dashiconClass = 'dashicons-media-default';
                         $newPreview.empty();
                         if (mimeType.indexOf('image/') === 0 || mimeType === 'image/svg+xml') {
@@ -1772,9 +1784,17 @@ function snn_output_dynamic_field_js() {
                 } else {
                     // Single selection (original logic)
                     var attachment = selection.first().toJSON();
+                    if (!attachment || !attachment.id) {
+                        return;
+                    }
                     $input.val(attachment.id);
                     var mimeType = attachment.mime || '';
-                    var imageURL = (attachment.sizes && attachment.sizes.thumbnail) ? attachment.sizes.thumbnail.url : attachment.url;
+                    var imageURL = (attachment.sizes && attachment.sizes.thumbnail && attachment.sizes.thumbnail.url) 
+                        ? attachment.sizes.thumbnail.url 
+                        : (attachment.url || '');
+                    if (!imageURL) {
+                        return;
+                    }
                     var dashiconClass = 'dashicons-media-default';
 
                     $previewWrapper.empty();
@@ -1918,7 +1938,7 @@ function snn_init_tinymce_html_default() {
     global $pagenow;
     if (in_array($pagenow, ['post-new.php', 'post.php'])) {
         $screen = get_current_screen();
-        if ( isset($screen->post_type) ) { 
+        if ( $screen && isset($screen->post_type) ) { 
             ?>
             <script type="text/javascript">
             jQuery(document).ready(function($) {

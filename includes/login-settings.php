@@ -92,6 +92,11 @@ function ls_login_background_image_url_callback() {
             var custom_uploader;
             $('#ls_upload_bg_img_btn').on('click', function(e) {
                 e.preventDefault();
+                // Verificar que wp.media esté disponible
+                if (typeof wp === 'undefined' || typeof wp.media === 'undefined') {
+                    alert('<?php echo esc_js(__('WordPress media library is not available. Please refresh the page.', 'snn')); ?>');
+                    return;
+                }
                 if (custom_uploader) {
                     custom_uploader.open();
                     return;
@@ -105,8 +110,10 @@ function ls_login_background_image_url_callback() {
                 });
                 custom_uploader.on('select', function() {
                     var attachment = custom_uploader.state().get('selection').first().toJSON();
-                    $('#ls_login_background_image_url').val(attachment.url);
-                    $('#ls_login_bg_img_preview').html('<img src="' + attachment.url + '" style="max-width:100%;height:auto;" />').show();
+                    if (attachment && attachment.url) {
+                        $('#ls_login_background_image_url').val(attachment.url);
+                        $('#ls_login_bg_img_preview').html('<img src="' + attachment.url + '" style="max-width:100%;height:auto;" />').show();
+                    }
                 });
                 custom_uploader.open();
             });

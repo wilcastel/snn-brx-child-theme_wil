@@ -62,6 +62,7 @@ class SNN_WebP_Image_Optimizer {
         add_action('wp_ajax_snn_get_conversion_status', array($this, 'get_conversion_status'));
         add_action('wp_ajax_snn_test_conversion', array($this, 'test_conversion_ajax'));
         add_action('wp_ajax_snn_convert_folder', array($this, 'convert_folder_ajax'));
+        add_action('wp_ajax_snn_convert_pending_images', array($this, 'convert_pending_images_ajax'));
         
         // WP Cron hooks for background processing
         add_action('snn_webp_background_conversion', array($this, 'process_background_conversion'));
@@ -118,6 +119,81 @@ class SNN_WebP_Image_Optimizer {
     }
     
     /**
+     * Convert all pending images (JPG/PNG without WebP versions)
+     */
+    public function convert_pending_images_ajax() {
+        if (!wp_verify_nonce($_POST['nonce'], 'snn_webp_nonce')) {
+            wp_die('Invalid nonce');
+        }
+        if (!current_user_can('manage_options')) {
+            wp_die('Insufficient permissions');
+        }
+        
+        $uploads = wp_upload_dir();
+        $basedir = rtrim($uploads['basedir'], '/\\');
+        $processed = 0;
+        $converted = 0;
+        $errors = 0;
+        
+        // Get batch size from options
+        $batch_size = intval($this->options['batch_size'] ?? 50);
+        
+        // Find all pending images
+        $pending_images = array();
+        $iterator = new RecursiveIteratorIterator(
+            new RecursiveDirectoryIterator($basedir, RecursiveDirectoryIterator::SKIP_DOTS)
+        );
+        
+        foreach ($iterator as $file) {
+            if (!$file->isFile()) {
+                continue;
+            }
+            
+            $ext = strtolower($file->getExtension());
+            
+            // Only check JPG and PNG files
+            if (!in_array($ext, array('jpg', 'jpeg', 'png'))) {
+                continue;
+            }
+            
+            // Check if WebP version exists in the same directory
+            $file_info = pathinfo($file->getPathname());
+            $webp_path = $file_info['dirname'] . '/' . $file_info['filename'] . '.webp';
+            
+            if (!file_exists($webp_path)) {
+                $pending_images[] = $file->getPathname();
+            }
+        }
+        
+        // Process images in batches
+        $total = count($pending_images);
+        $batch = array_slice($pending_images, 0, $batch_size);
+        
+        foreach ($batch as $image_path) {
+            $processed++;
+            $result = $this->convert_image_to_webp($image_path);
+            if ($result) {
+                $converted++;
+            } else {
+                $errors++;
+            }
+        }
+        
+        wp_send_json_success(array(
+            'processed' => $processed,
+            'converted' => $converted,
+            'errors' => $errors,
+            'total_pending' => $total,
+            'remaining' => max(0, $total - $batch_size),
+            'message' => sprintf(
+                __('Procesadas %d de %d imágenes pendientes', 'snn'),
+                $processed,
+                $total
+            )
+        ));
+    }
+    
+    /**
      * Create WebP directory
      */
     private function create_webp_directory() {
@@ -134,12 +210,18 @@ class SNN_WebP_Image_Optimizer {
      * Convert uploaded image to WebP
      */
     public function convert_uploaded_image($upload) {
-        if (!($this->options['enable_webp'] ?? true)) {
+        // Check if WebP conversion is disabled or Cloudflare is being used
+        if (!($this->options['enable_webp'] ?? true) || $this->is_cloudflare_webp_enabled()) {
             return $upload;
         }
         
         $file_path = $upload['file'];
         $file_type = wp_check_filetype($file_path);
+        
+        // Skip if already WebP
+        if (isset($file_type['ext']) && strtolower($file_type['ext']) === 'webp') {
+            return $upload;
+        }
         
         // Only convert supported image types
         if (in_array($file_type['type'], array('image/jpeg', 'image/png'))) {
@@ -153,7 +235,8 @@ class SNN_WebP_Image_Optimizer {
      * Convert attachment image to WebP (ALL SIZES)
      */
     public function convert_attachment_image($attachment_id) {
-        if (!($this->options['enable_webp'] ?? true)) {
+        // Check if WebP conversion is disabled or Cloudflare is being used
+        if (!($this->options['enable_webp'] ?? true) || $this->is_cloudflare_webp_enabled()) {
             return;
         }
         
@@ -201,7 +284,12 @@ class SNN_WebP_Image_Optimizer {
             return false;
         }
         
+        // Skip if file is already WebP
         $file_info = pathinfo($file_path);
+        if (isset($file_info['extension']) && strtolower($file_info['extension']) === 'webp') {
+            return $file_path;
+        }
+        
         $webp_path = $file_info['dirname'] . '/' . $file_info['filename'] . '.webp';
         
         // Skip if WebP already exists and is newer
@@ -297,26 +385,39 @@ class SNN_WebP_Image_Optimizer {
      * Replace image source with WebP version
      */
     public function replace_with_webp($image, $attachment_id, $size, $icon) {
-        if (!($this->options['enable_webp'] ?? true)) {
+        // If Cloudflare is handling WebP, let it do its job
+        if (!($this->options['enable_webp'] ?? true) || $this->is_cloudflare_webp_enabled()) {
             return $image;
         }
         
-        if (!$image || !$attachment_id) {
+        if (!$image || !is_array($image) || !isset($image[0]) || !$attachment_id) {
+            return $image;
+        }
+        
+        // Validar que la URL original existe
+        if (empty($image[0]) || !filter_var($image[0], FILTER_VALIDATE_URL)) {
             return $image;
         }
         
         $file_path = get_attached_file($attachment_id);
-        if (!$file_path) {
+        if (!$file_path || !file_exists($file_path)) {
             return $image;
         }
         
         $file_info = pathinfo($file_path);
+        if (!isset($file_info['filename'])) {
+            return $image;
+        }
+        
         $webp_path = $this->webp_dir . $file_info['filename'] . '.webp';
         
         // Check if WebP version exists
         if (file_exists($webp_path)) {
             $webp_url = $this->upload_dir['baseurl'] . '/webp/' . $file_info['filename'] . '.webp';
-            $image[0] = $webp_url;
+            // Validar que la URL WebP es válida antes de reemplazar
+            if (filter_var($webp_url, FILTER_VALIDATE_URL)) {
+                $image[0] = $webp_url;
+            }
         }
         
         return $image;
@@ -326,7 +427,8 @@ class SNN_WebP_Image_Optimizer {
      * Replace images in content with WebP versions (Enhanced)
      */
     public function replace_content_images($content) {
-        if (!($this->options['enable_webp'] ?? true)) {
+        // If Cloudflare is handling WebP, let it do its job
+        if (!($this->options['enable_webp'] ?? true) || $this->is_cloudflare_webp_enabled()) {
             return $content;
         }
         
@@ -334,8 +436,13 @@ class SNN_WebP_Image_Optimizer {
         preg_match_all('/<img[^>]+src="([^"]+)"[^>]*>/i', $content, $matches);
         
         foreach ($matches[1] as $index => $image_url) {
+            // Validar URL antes de procesar
+            if (empty($image_url) || !filter_var($image_url, FILTER_VALIDATE_URL)) {
+                continue;
+            }
+            
             $webp_url = $this->get_webp_url($image_url);
-            if ($webp_url) {
+            if ($webp_url && $webp_url !== false && filter_var($webp_url, FILTER_VALIDATE_URL)) {
                 // Replace the src attribute
                 $content = str_replace($image_url, $webp_url, $content);
                 
@@ -359,17 +466,61 @@ class SNN_WebP_Image_Optimizer {
             return;
         }
         
+        // Usar caché estático para evitar múltiples llamadas
+        static $preload_output = false;
+        if ($preload_output) {
+            return; // Ya se ejecutó, evitar duplicados
+        }
+        
         $critical_images = $this->get_critical_images();
         
+        // Limitar a máximo 5 imágenes críticas para evitar sobrecarga
+        $max_critical_images = 5;
+        $critical_images = array_slice($critical_images, 0, $max_critical_images);
+        
+        $preloaded_count = 0;
         foreach ($critical_images as $image_url) {
-            echo '<link rel="preload" as="image" href="' . esc_url($image_url) . '">' . "\n";
+            try {
+                // Validar URL antes de preload
+                if (empty($image_url) || !filter_var($image_url, FILTER_VALIDATE_URL)) {
+                    continue;
+                }
+                
+                // Limitar número de preloads para evitar errores 502
+                if ($preloaded_count >= $max_critical_images) {
+                    break;
+                }
+                
+                // Preferir WebP si existe, sino preload la original
+                $webp_url = $this->get_webp_url($image_url);
+                if ($webp_url && filter_var($webp_url, FILTER_VALIDATE_URL)) {
+                    echo '<link rel="preload" as="image" href="' . esc_url($webp_url) . '" fetchpriority="high" type="image/webp">' . "\n";
+                } else {
+                    // Solo preload original si no hay WebP
+                    echo '<link rel="preload" as="image" href="' . esc_url($image_url) . '" fetchpriority="high">' . "\n";
+                }
+                
+                $preloaded_count++;
+            } catch (Exception $e) {
+                // Silenciosamente continuar si hay un error con una imagen
+                // Esto previene que un error en una imagen detenga todo el proceso
+                continue;
+            }
         }
+        
+        $preload_output = true; // Marcar como ejecutado
     }
     
     /**
      * Get critical images for preloading
      */
     private function get_critical_images() {
+        // Usar caché estático para evitar consultas múltiples
+        static $cached_images = null;
+        if ($cached_images !== null) {
+            return $cached_images;
+        }
+        
         $critical_images = array();
         
         // Get featured image of current post
@@ -383,12 +534,43 @@ class SNN_WebP_Image_Optimizer {
             }
         }
         
-        // Get logo
+        // Get logo from theme mod
         $custom_logo_id = get_theme_mod('custom_logo');
         if ($custom_logo_id) {
             $logo_url = wp_get_attachment_image_url($custom_logo_id, 'full');
             if ($logo_url) {
                 $critical_images[] = $logo_url;
+                // NO agregar WebP aquí, se manejará en preload_critical_images para evitar duplicados
+            }
+        }
+        
+        // Find logo images by filename pattern (for Bricks Builder usage)
+        // Limitado a 1 por patrón para evitar demasiadas consultas
+        $logo_file_patterns = array('logo-dln', 'logo', 'brand');
+        
+        // Search for logo files in uploads (limitado para rendimiento)
+        foreach ($logo_file_patterns as $pattern) {
+            $args = array(
+                'post_type' => 'attachment',
+                'post_mime_type' => 'image',
+                'posts_per_page' => 1, // Reducido de 10 a 1 para mejor rendimiento
+                'post_status' => 'inherit',
+                'meta_query' => array(
+                    array(
+                        'key' => '_wp_attached_file',
+                        'value' => $pattern,
+                        'compare' => 'LIKE'
+                    )
+                )
+            );
+            
+            $logo_attachments = get_posts($args);
+            foreach ($logo_attachments as $attachment) {
+                $logo_url = wp_get_attachment_image_url($attachment->ID, 'full');
+                if ($logo_url) {
+                    $critical_images[] = $logo_url;
+                    // NO agregar WebP aquí, se manejará en preload_critical_images
+                }
             }
         }
         
@@ -404,7 +586,9 @@ class SNN_WebP_Image_Optimizer {
             }
         }
         
-        return array_unique($critical_images);
+        // Guardar en caché estático
+        $cached_images = array_unique($critical_images);
+        return $cached_images;
     }
     
     /**
@@ -423,15 +607,74 @@ class SNN_WebP_Image_Optimizer {
             return $attr;
         }
         
-        // Add lazy loading attributes
-        $attr['loading'] = 'lazy';
-        $attr['decoding'] = 'async';
+        // Skip lazy loading for logo images (common logo file names and patterns)
+        $file_path = get_attached_file($attachment->ID);
+        if ($file_path) {
+            $file_name = basename($file_path);
+            $file_name_lower = strtolower($file_name);
+            
+            // Check for logo patterns
+            $logo_patterns = array('logo', 'brand', 'header-logo', 'site-logo', 'logo-dln');
+            foreach ($logo_patterns as $pattern) {
+                if (strpos($file_name_lower, $pattern) !== false) {
+                    return $attr;
+                }
+            }
+        }
         
-        // Add placeholder
-        if ($this->options['enable_placeholder'] ?? true) {
-            $attr['data-src'] = $attr['src'];
-            $attr['src'] = $this->get_placeholder_image($attachment->ID);
-            $attr['class'] = ($attr['class'] ?? '') . ' snn-lazy-image';
+        // Skip lazy loading if image already has class indicating it's critical or in header
+        $existing_class = $attr['class'] ?? '';
+        if (!empty($existing_class)) {
+            $critical_classes = array('logo', 'site-logo', 'header-logo', 'brand', 'critical-image', 'no-lazy');
+            $class_array = explode(' ', $existing_class);
+            foreach ($class_array as $class) {
+                foreach ($critical_classes as $critical_class) {
+                    if (stripos($class, $critical_class) !== false) {
+                        return $attr;
+                    }
+                }
+            }
+        }
+        
+        // Agregar width y height para prevenir CLS (Cumulative Layout Shift)
+        $metadata = wp_get_attachment_metadata($attachment->ID);
+        if ($metadata && isset($metadata['width']) && isset($metadata['height'])) {
+            // Calcular dimensiones basadas en el tamaño solicitado
+            $size_array = $this->get_image_size_dimensions($attachment->ID, $size);
+            if ($size_array) {
+                $attr['width'] = $size_array[0];
+                $attr['height'] = $size_array[1];
+            } else {
+                // Fallback a dimensiones originales si no hay tamaño específico
+                $attr['width'] = $metadata['width'];
+                $attr['height'] = $metadata['height'];
+            }
+            // Agregar aspect-ratio para mejor CLS (prevenir layout shift)
+            if ($attr['width'] > 0 && $attr['height'] > 0) {
+                $attr['style'] = ($attr['style'] ?? '') . ' aspect-ratio: ' . $attr['width'] . ' / ' . $attr['height'] . ';';
+            }
+        }
+        
+        // Add lazy loading attributes solo si no es crítica
+        $is_critical = in_array($current_image_url, $critical_images);
+        
+        if (!$is_critical) {
+            $attr['loading'] = 'lazy';
+            $attr['decoding'] = 'async';
+            
+            // Add placeholder solo si está habilitado
+            if ($this->options['enable_placeholder'] ?? true) {
+                // Guardar la URL original en data-src
+                $attr['data-src'] = $attr['src'];
+                // Usar placeholder temporal
+                $attr['src'] = $this->get_placeholder_image($attachment->ID);
+                $attr['class'] = ($attr['class'] ?? '') . ' snn-lazy-image';
+            }
+        } else {
+            // Para imágenes críticas, cargar inmediatamente
+            $attr['loading'] = 'eager';
+            $attr['decoding'] = 'sync';
+            $attr['fetchpriority'] = 'high';
         }
         
         return $attr;
@@ -441,6 +684,11 @@ class SNN_WebP_Image_Optimizer {
      * Serve WebP images automatically (Enhanced)
      */
     public function serve_webp_images() {
+        // Skip if Cloudflare is handling WebP
+        if ($this->is_cloudflare_webp_enabled()) {
+            return;
+        }
+        
         // Only serve WebP for image requests
         if (!isset($_SERVER['REQUEST_URI'])) {
             return;
@@ -516,16 +764,23 @@ class SNN_WebP_Image_Optimizer {
      * Replace attachment URL with WebP version
      */
     public function replace_attachment_url_with_webp($url, $attachment_id) {
-        if (!($this->options['enable_webp'] ?? true)) {
+        // If Cloudflare is handling WebP, let it do its job
+        if (!($this->options['enable_webp'] ?? true) || $this->is_cloudflare_webp_enabled()) {
+            return $url;
+        }
+        
+        // Validar que la URL original existe y es válida
+        if (empty($url) || !filter_var($url, FILTER_VALIDATE_URL)) {
             return $url;
         }
         
         // Check if WebP version exists
         $webp_url = $this->get_webp_url($url);
-        if ($webp_url) {
+        if ($webp_url && $webp_url !== false) {
             return $webp_url;
         }
         
+        // Siempre devolver la URL original si no hay WebP
         return $url;
     }
     
@@ -533,7 +788,8 @@ class SNN_WebP_Image_Optimizer {
      * Replace srcset with WebP versions
      */
     public function replace_srcset_with_webp($sources, $size_array, $image_src, $image_meta, $attachment_id) {
-        if (!($this->options['enable_webp'] ?? true)) {
+        // If Cloudflare is handling WebP, let it do its job
+        if (!($this->options['enable_webp'] ?? true) || $this->is_cloudflare_webp_enabled()) {
             return $sources;
         }
         
@@ -561,11 +817,49 @@ class SNN_WebP_Image_Optimizer {
         $relative_path = str_replace($upload_url, '', $image_url);
         $file_info = pathinfo($relative_path);
         
+        // If image is already WebP, return it as is
+        if (isset($file_info['extension']) && strtolower($file_info['extension']) === 'webp') {
+            // Verify the file exists
+            $current_path = $this->upload_dir['basedir'] . $relative_path;
+            if (file_exists($current_path)) {
+                return $image_url;
+            }
+            return false;
+        }
+        
         // Check for WebP version in same location
         $webp_path = $this->upload_dir['basedir'] . $file_info['dirname'] . '/' . $file_info['filename'] . '.webp';
         
         if (file_exists($webp_path)) {
             return $upload_url . $file_info['dirname'] . '/' . $file_info['filename'] . '.webp';
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Get image size dimensions
+     */
+    private function get_image_size_dimensions($attachment_id, $size) {
+        $metadata = wp_get_attachment_metadata($attachment_id);
+        if (!$metadata) {
+            return false;
+        }
+        
+        // Si es un tamaño específico de WordPress
+        if (is_array($size) && count($size) === 2) {
+            return $size;
+        }
+        
+        // Obtener dimensiones del tamaño solicitado
+        $image_src = wp_get_attachment_image_src($attachment_id, $size);
+        if ($image_src && isset($image_src[1]) && isset($image_src[2])) {
+            return array($image_src[1], $image_src[2]);
+        }
+        
+        // Fallback a dimensiones originales
+        if (isset($metadata['width']) && isset($metadata['height'])) {
+            return array($metadata['width'], $metadata['height']);
         }
         
         return false;
@@ -586,6 +880,28 @@ class SNN_WebP_Image_Optimizer {
         return "data:image/svg+xml;base64," . base64_encode(
             '<svg width="' . $width . '" height="' . $height . '" viewBox="0 0 ' . $width . ' ' . $height . '" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="' . $width . '" height="' . $height . '" fill="#f3f4f6"/></svg>'
         );
+    }
+    
+    /**
+     * Check if Cloudflare is handling WebP conversion
+     * Returns true if Cloudflare is detected and WebP conversion should be delegated to it
+     */
+    private function is_cloudflare_webp_enabled() {
+        // Check if user has explicitly disabled theme WebP (assumes Cloudflare is being used)
+        // This is a safe default: if Cloudflare is detected and WebP is disabled, assume Cloudflare handles it
+        $has_cloudflare = isset($_SERVER['HTTP_CF_RAY']) || 
+                          isset($_SERVER['HTTP_CF_VISITOR']) || 
+                          isset($_SERVER['HTTP_CF_CONNECTING_IP']);
+        
+        // Only assume Cloudflare handles WebP if:
+        // 1. Cloudflare is detected AND
+        // 2. Theme WebP conversion is disabled
+        // This way, if user enables theme WebP, it takes precedence
+        if ($has_cloudflare && !($this->options['enable_webp'] ?? true)) {
+            return true;
+        }
+        
+        return false;
     }
     
     /**
@@ -702,8 +1018,21 @@ class SNN_WebP_Image_Optimizer {
      */
     public function enable_webp_callback() {
         $enabled = isset($this->options['enable_webp']) ? $this->options['enable_webp'] : true;
+        
+        // Check if Cloudflare is detected
+        $has_cloudflare = false;
+        if (isset($_SERVER['HTTP_CF_RAY']) || isset($_SERVER['HTTP_CF_VISITOR']) || isset($_SERVER['HTTP_CF_CONNECTING_IP'])) {
+            $has_cloudflare = true;
+        }
+        
         echo '<input type="checkbox" name="snn_webp_options[enable_webp]" value="1" ' . checked(1, $enabled, false) . ' />';
         echo '<p class="description">' . __('Automatically convert uploaded images to WebP format.', 'snn') . '</p>';
+        
+        if ($has_cloudflare && $enabled) {
+            echo '<p class="description" style="color: #d63638; font-weight: bold;">';
+            echo '⚠️ ' . __('Cloudflare detectado: Se recomienda desactivar esta opción si usas Cloudflare Polish/Image Resizing para evitar duplicación.', 'snn');
+            echo '</p>';
+        }
     }
     
     public function webp_quality_callback() {

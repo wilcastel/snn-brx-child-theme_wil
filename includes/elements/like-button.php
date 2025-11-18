@@ -185,9 +185,12 @@ if ( is_user_logged_in() ) {
     } );
 
     add_action('rest_authentication_errors', function ( $result ) {
-        if ( strpos( $_SERVER['REQUEST_URI'], 'snn/v1/' ) !== false ) {
+        // Only allow snn/v1 endpoints, but don't interfere with anything else
+        $request_uri = isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : '';
+        if ( !empty($request_uri) && strpos( $request_uri, 'snn/v1/' ) !== false ) {
             return true;
         }
+        // For everything else (including WindPress), return unchanged
         return $result;
     }, 99);
 

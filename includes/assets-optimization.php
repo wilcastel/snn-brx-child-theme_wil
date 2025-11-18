@@ -19,13 +19,26 @@ class SNN_Assets_Optimization {
     private $upload_dir;
     
     public function __construct() {
+        // Solo inicializar en frontend, no en admin (excepto página de settings)
+        if (is_admin()) {
+            // Solo registrar settings en la página de configuración
+            global $pagenow;
+            if (isset($pagenow) && $pagenow === 'admin.php' && isset($_GET['page']) && $_GET['page'] === 'snn-assets-optimization') {
+                add_action('admin_init', array($this, 'register_settings'));
+            }
+            // No ejecutar nada más en admin
+            return;
+        }
+        
+        // Solo inicializar en frontend
         $this->upload_dir = wp_upload_dir();
         $this->options = get_option('snn_assets_options', array());
         
-        // Initialize settings
-        add_action('admin_init', array($this, 'register_settings'));
+        // Prevent Cloudflare PageSpeed from optimizing WordPress core CSS files
+        // Must run early to set headers before assets are loaded
+        add_action('send_headers', array($this, 'prevent_cloudflare_pagespeed_headers'), 1);
         
-        // Apply optimizations
+        // Apply optimizations (solo en frontend)
         add_action('wp_enqueue_scripts', array($this, 'apply_font_optimizations'), 1);
         add_action('wp_enqueue_scripts', array($this, 'apply_css_optimizations'), 1);
         add_action('wp_enqueue_scripts', array($this, 'apply_js_optimizations'), 1);
@@ -39,11 +52,18 @@ class SNN_Assets_Optimization {
         // Resource hints
         add_action('wp_head', array($this, 'add_resource_hints'), 1);
         
+        // WP object safety check (muy temprano, antes de otros scripts)
+        add_action('wp_head', array($this, 'add_wp_safety_check'), 0);
+        
         // Defer non-critical JavaScript
         add_filter('script_loader_tag', array($this, 'defer_non_critical_js'), 10, 2);
         
         // Remove unused CSS
-        add_action('wp_enqueue_scripts', array($this, 'remove_unused_css'), 999);
+        // Priority 99999 to ensure it runs AFTER Jetpack and other plugins that enqueue wp-block-library
+        add_action('wp_enqueue_scripts', array($this, 'remove_unused_css'), 99999);
+        
+        // Also remove on wp_head as a fallback (runs even later, just before output)
+        add_action('wp_head', array($this, 'remove_unused_css_head'), 1);
         
         // Optimize third-party scripts
         add_action('wp_enqueue_scripts', array($this, 'optimize_third_party_scripts'), 999);
@@ -218,7 +238,11 @@ class SNN_Assets_Optimization {
             $this->remove_unused_css();
         }
         
-        // Minify CSS
+        // Prevent Cloudflare PageSpeed from optimizing WordPress core CSS files
+        // Cloudflare generates invalid URLs like: A.style.min.css,qver=6.8.3.pagespeed.cf.xxx.css
+        add_filter('style_loader_src', array($this, 'prevent_cloudflare_pagespeed_on_core_css'), 5, 2);
+        
+        // Minify CSS (but exclude core files)
         if ($this->options['css_minification'] ?? true) {
             add_filter('style_loader_src', array($this, 'add_css_minification'), 10, 2);
         }
@@ -273,11 +297,21 @@ class SNN_Assets_Optimization {
             return;
         }
         
+        // Array para rastrear fuentes ya preloadadas y evitar duplicados
+        static $preloaded_fonts = array();
+        
         $fonts = explode("\n", $critical_fonts);
         foreach ($fonts as $font) {
             $font = trim($font);
             if (!empty($font)) {
-                echo '<link rel="preload" href="' . esc_url($font) . '" as="font" type="font/woff2" crossorigin>';
+                // Evitar preloads duplicados del mismo recurso
+                if (isset($preloaded_fonts[$font])) {
+                    continue;
+                }
+                $preloaded_fonts[$font] = true;
+                
+                // Usar crossorigin="anonymous" en lugar de solo crossorigin
+                echo '<link rel="preload" href="' . esc_url($font) . '" as="font" type="font/woff2" crossorigin="anonymous">' . "\n";
             }
         }
     }
@@ -324,6 +358,10 @@ class SNN_Assets_Optimization {
      * Defer non-critical JavaScript
      */
     public function defer_non_critical_js($tag, $handle) {
+        // No aplicar en admin
+        if (is_admin()) {
+            return $tag;
+        }
         // Critical scripts that should not be deferred
         $critical_scripts = array(
             'jquery',
@@ -343,11 +381,17 @@ class SNN_Assets_Optimization {
     
     /**
      * Remove unused CSS
+     * CRITICAL: This must run AFTER Jetpack and other plugins that enqueue wp-block-library
      */
     public function remove_unused_css() {
         // Remove unused WordPress CSS
+        // Jetpack is known to enqueue wp-block-library, so we need to dequeue it here
         wp_dequeue_style('wp-block-library');
+        wp_deregister_style('wp-block-library');
+        
         wp_dequeue_style('wp-block-library-theme');
+        wp_deregister_style('wp-block-library-theme');
+        
         wp_dequeue_style('global-styles');
         wp_dequeue_style('classic-theme-styles');
         
@@ -355,6 +399,18 @@ class SNN_Assets_Optimization {
         if (!bricks_is_builder_main()) {
             wp_dequeue_style('bricks-admin');
         }
+    }
+    
+    /**
+     * Remove unused CSS from head (fallback - runs just before HTML output)
+     * This ensures we remove it even if plugins enqueue it very late
+     */
+    public function remove_unused_css_head() {
+        // Final attempt to remove wp-block-library before it's output
+        wp_dequeue_style('wp-block-library');
+        wp_deregister_style('wp-block-library');
+        wp_dequeue_style('wp-block-library-theme');
+        wp_deregister_style('wp-block-library-theme');
     }
     
     /**
@@ -428,10 +484,171 @@ class SNN_Assets_Optimization {
     }
     
     /**
-     * Add CSS minification
+     * Add wp object safety check to prevent undefined errors
+     */
+    public function add_wp_safety_check() {
+        // Solo en frontend, no en admin
+        if (is_admin()) {
+            return;
+        }
+        
+        ?>
+        <script>
+        // Protección global para prevenir errores de wp no definido
+        (function() {
+            if (typeof wp === "undefined") {
+                window.wp = {
+                    media: function() {
+                        console.warn("wp.media no está disponible en el frontend");
+                        return {
+                            on: function() { return this; },
+                            open: function() { return this; }
+                        };
+                    },
+                    data: null,
+                    codeEditor: null,
+                    i18n: {
+                        setLocaleData: function() {
+                            // No-op: prevenir errores cuando plugins intentan usar i18n en frontend
+                            return;
+                        },
+                        __: function(text) {
+                            return text;
+                        },
+                        _x: function(text, context) {
+                            return text;
+                        },
+                        _n: function(single, plural, number) {
+                            return number === 1 ? single : plural;
+                        },
+                        sprintf: function(format) {
+                            var args = Array.prototype.slice.call(arguments, 1);
+                            var percentChar = String.fromCharCode(37);
+                            return format.replace(/%[sdj%]/g, function(match) {
+                                if (match === percentChar + percentChar) return percentChar;
+                                var arg = args.shift();
+                                if (arg === undefined || arg === null) return '';
+                                if (match === '%j') return JSON.stringify(arg);
+                                return String(arg);
+                            });
+                        }
+                    }
+                };
+            } else {
+                // Si wp existe pero i18n no, agregarlo
+                if (!wp.i18n) {
+                    wp.i18n = {
+                        setLocaleData: function() {
+                            return;
+                        },
+                        __: function(text) {
+                            return text;
+                        },
+                        _x: function(text, context) {
+                            return text;
+                        },
+                        _n: function(single, plural, number) {
+                            return number === 1 ? single : plural;
+                        },
+                        sprintf: function(format) {
+                            var args = Array.prototype.slice.call(arguments, 1);
+                            var percentChar = String.fromCharCode(37);
+                            return format.replace(/%[sdj%]/g, function(match) {
+                                if (match === percentChar + percentChar) return percentChar;
+                                var arg = args.shift();
+                                if (arg === undefined || arg === null) return '';
+                                if (match === '%j') return JSON.stringify(arg);
+                                return String(arg);
+                            });
+                        }
+                    };
+                }
+            }
+        })();
+        </script>
+        <?php
+    }
+    
+    /**
+     * Set headers to prevent Cloudflare PageSpeed from optimizing WordPress core CSS files
+     * This prevents invalid URLs like: A.style.min.css,qver=6.8.3.pagespeed.cf.xxx.css
+     */
+    public function prevent_cloudflare_pagespeed_headers() {
+        // Add header to exclude WordPress core CSS files from Cloudflare PageSpeed optimization
+        // This is a general header that tells Cloudflare not to optimize certain paths
+        if (!headers_sent()) {
+            // Note: Cloudflare may not respect this header, but it's worth trying
+            // The best solution is to configure Cloudflare settings directly
+            header('X-Robots-Tag: noindex, nofollow', false);
+            
+            // Alternative: Add a meta tag in HTML (done via wp_head)
+            // Or configure Cloudflare via Page Rules to exclude /wp-includes/css/
+        }
+    }
+    
+    /**
+     * Prevent Cloudflare PageSpeed from optimizing WordPress core CSS files via URL modification
+     * This prevents invalid URLs like: A.style.min.css,qver=6.8.3.pagespeed.cf.xxx.css
+     */
+    public function prevent_cloudflare_pagespeed_on_core_css($src, $handle) {
+        if (empty($src)) {
+            return $src;
+        }
+        
+        // Check if this is a WordPress core CSS file
+        $is_core_css = (
+            strpos($src, '/wp-includes/css/') !== false ||
+            strpos($src, '/wp-admin/css/') !== false ||
+            strpos($src, '/wp-content/themes/twenty') !== false // Default themes
+        );
+        
+        if ($is_core_css) {
+            // Remove any existing query parameters that might trigger Cloudflare optimization
+            // and add a parameter to prevent optimization
+            $url_parts = parse_url($src);
+            $src = $url_parts['scheme'] . '://' . $url_parts['host'] . 
+                   (isset($url_parts['port']) ? ':' . $url_parts['port'] : '') .
+                   $url_parts['path'];
+            
+            // Keep version parameter if it exists (important for cache busting)
+            if (isset($url_parts['query'])) {
+                parse_str($url_parts['query'], $query_params);
+                // Keep 'ver' parameter
+                if (isset($query_params['ver'])) {
+                    $src = add_query_arg('ver', $query_params['ver'], $src);
+                }
+            }
+            
+            // Add parameter to discourage Cloudflare optimization
+            // Note: This may not work as Cloudflare controls this at edge level
+            $src = add_query_arg('cf_no_optimize', '1', $src);
+        }
+        
+        return $src;
+    }
+    
+    /**
+     * Add CSS minification (excludes core WordPress files)
      */
     public function add_css_minification($src, $handle) {
-        // Add minification parameter
+        if (empty($src)) {
+            return $src;
+        }
+        
+        // Skip minification for WordPress core CSS files
+        // These files should not be processed by Cloudflare PageSpeed
+        $is_core_css = (
+            strpos($src, '/wp-includes/css/') !== false ||
+            strpos($src, '/wp-admin/css/') !== false ||
+            strpos($src, '/wp-content/themes/twenty') !== false
+        );
+        
+        if ($is_core_css) {
+            // Don't add minification parameter for core files
+            return $src;
+        }
+        
+        // Add minification parameter for other CSS files
         return add_query_arg('minify', 'true', $src);
     }
     
@@ -523,5 +740,5 @@ class SNN_Assets_Optimization {
     }
 }
 
-// Initialize the class
+// Initialize the class (siempre, pero el constructor maneja cuándo ejecutar código)
 new SNN_Assets_Optimization();

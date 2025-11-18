@@ -19,6 +19,7 @@ require_once SNN_PATH . 'includes/security-optimization.php';
 // Head optimization (always active for better Core Web Vitals)
 require_once SNN_PATH . 'includes/head-optimization.php';
 
+
 // Security migration helper (run once to migrate existing options)
 require_once SNN_PATH . 'includes/security-migration.php';
 
@@ -33,6 +34,9 @@ require_once SNN_PATH . 'includes/xml-sitemaps-generator.php';
 
 // XML Sitemaps Rewrite Rules
 require_once SNN_PATH . 'includes/xml-sitemaps-rewrite.php';
+
+// Image Auto Optimizer (resize and optimize images on upload)
+require_once SNN_PATH . 'includes/image-auto-optimizer.php';
 
 // WebP Image Optimization System
 require_once SNN_PATH . 'includes/webp-image-optimizer.php';

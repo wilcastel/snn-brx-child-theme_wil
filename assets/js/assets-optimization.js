@@ -119,22 +119,49 @@
                 entries.forEach(entry => {
                     if (entry.isIntersecting) {
                         const img = entry.target;
-                        img.src = img.dataset.src;
-                        img.classList.remove('lazy-loading');
-                        img.classList.add('loaded');
-                        observer.unobserve(img);
+                        const src = img.dataset.src;
+                        
+                        // Validar que src existe y es una URL válida
+                        if (src && src.trim() !== '' && src !== 'undefined' && src.indexOf('undefined') === -1) {
+                            img.src = src;
+                            img.classList.remove('lazy-loading');
+                            img.classList.add('loaded');
+                            observer.unobserve(img);
+                        } else {
+                            // Si data-src es inválido, remover el atributo para evitar errores
+                            img.removeAttribute('data-src');
+                            img.classList.remove('lazy-loading');
+                            img.classList.add('error');
+                            console.warn('Invalid data-src attribute removed:', src);
+                        }
                     }
                 });
+            }, {
+                rootMargin: '50px' // Cargar imágenes antes de que estén visibles
             });
             
-            lazyImages.forEach(img => imageObserver.observe(img));
+            lazyImages.forEach(img => {
+                // Validar antes de observar
+                if (img.dataset.src && img.dataset.src.trim() !== '' && img.dataset.src !== 'undefined') {
+                    imageObserver.observe(img);
+                } else {
+                    img.removeAttribute('data-src');
+                    img.classList.add('error');
+                }
+            });
         } else {
             // Fallback for older browsers
             const lazyImages = document.querySelectorAll('img[data-src]');
             lazyImages.forEach(img => {
-                img.src = img.dataset.src;
-                img.classList.remove('lazy-loading');
-                img.classList.add('loaded');
+                const src = img.dataset.src;
+                if (src && src.trim() !== '' && src !== 'undefined' && src.indexOf('undefined') === -1) {
+                    img.src = src;
+                    img.classList.remove('lazy-loading');
+                    img.classList.add('loaded');
+                } else {
+                    img.removeAttribute('data-src');
+                    img.classList.add('error');
+                }
             });
         }
     }
@@ -207,13 +234,20 @@
     
     // Initialize all optimizations
     function initOptimizations() {
-        initCoreWebVitals();
-        optimizeFontLoading();
-        optimizeLazyLoading();
-        optimizeCSS();
-        optimizeJavaScript();
-        optimizeThirdParty();
-        optimizeResourceHints();
+        try {
+            initCoreWebVitals();
+            optimizeFontLoading();
+            optimizeLazyLoading();
+            optimizeCSS();
+            optimizeJavaScript();
+            optimizeThirdParty();
+            optimizeResourceHints();
+        } catch (e) {
+            // Prevenir que errores en optimizaciones detengan la página
+            if (typeof console !== 'undefined' && console.error) {
+                console.error('Error en optimizaciones de assets:', e);
+            }
+        }
     }
     
     // Run optimizations when DOM is ready

@@ -48,6 +48,11 @@ function snn_login_logo_url_callback() {
     jQuery(document).ready(function($){
         $('.snn-media-upload').off('click').on('click', function(e) {
             e.preventDefault();
+            // Verificar que wp.media esté disponible
+            if (typeof wp === 'undefined' || typeof wp.media === 'undefined') {
+                alert('<?php echo esc_js(__('WordPress media library is not available. Please refresh the page.', 'snn')); ?>');
+                return;
+            }
             var button = $(this);
             var custom_uploader = wp.media({
                 title: '<?php echo esc_js(__('Select or Upload Logo', 'snn')); ?>',
@@ -58,7 +63,9 @@ function snn_login_logo_url_callback() {
             })
             .on('select', function() {
                 var attachment = custom_uploader.state().get('selection').first().toJSON();
-                $('#' + button.data('target')).val(attachment.url);
+                if (attachment && attachment.url) {
+                    $('#' + button.data('target')).val(attachment.url);
+                }
             })
             .open();
         });

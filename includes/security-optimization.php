@@ -434,7 +434,7 @@ class SNN_Security_Optimization {
         }
         
         if (isset($options['disable_json_api_guests']) && $options['disable_json_api_guests']) {
-            add_filter('rest_authentication_errors', array($this, 'disable_json_for_guests'));
+            add_filter('rest_authentication_errors', array($this, 'disable_json_for_guests'), 99);
         }
         
         if (isset($options['disable_file_editing']) && $options['disable_file_editing']) {
@@ -499,7 +499,10 @@ class SNN_Security_Optimization {
         }
         
         if (isset($options['remove_wp_block_library']) && $options['remove_wp_block_library']) {
-            add_action('wp_enqueue_scripts', array($this, 'remove_wp_block_library'));
+            // Priority 99999 to ensure it runs AFTER Jetpack and other plugins
+            add_action('wp_enqueue_scripts', array($this, 'remove_wp_block_library'), 99999);
+            // Also remove on wp_head as fallback
+            add_action('wp_head', array($this, 'remove_wp_block_library_head'), 1);
         }
         
         // Loading Optimization
@@ -507,9 +510,10 @@ class SNN_Security_Optimization {
             add_action('wp_head', array($this, 'optimize_css_loading'), 1);
         }
         
-        if (isset($options['preload_critical_fonts']) && $options['preload_critical_fonts']) {
-            add_action('wp_head', array($this, 'preload_critical_fonts'), 1);
-        }
+        // Preload de fuentes movido a assets-optimization.php para evitar duplicados
+        // if (isset($options['preload_critical_fonts']) && $options['preload_critical_fonts']) {
+        //     add_action('wp_head', array($this, 'preload_critical_fonts'), 1);
+        // }
         
         // Protocol Settings
         if (isset($options['force_https']) && $options['force_https']) {
@@ -548,11 +552,6 @@ class SNN_Security_Optimization {
             return 0; // Force external files instead of inline CSS
         });
         
-        // Remove unnecessary API links
-        remove_action('wp_head', 'rest_output_link_wp_head');
-        remove_action('wp_head', 'wp_shortlink_wp_head');
-        remove_action('wp_head', 'wp_oembed_add_discovery_links');
-        
         // Remove WordPress generator
         remove_action('wp_head', 'wp_generator');
         
@@ -564,9 +563,6 @@ class SNN_Security_Optimization {
         
         // Remove DNS prefetch
         remove_action('wp_head', 'wp_resource_hints', 2);
-        
-        // Optimize WindPress
-        add_filter('windpress_debug_mode', '__return_false');
         
         // Remove admin bar for non-admin users
         if (!current_user_can('administrator')) {
@@ -612,10 +608,29 @@ class SNN_Security_Optimization {
      * Disable JSON API for guests
      */
     public function disable_json_for_guests($result) {
-        if (!is_user_logged_in()) {
-            return new WP_Error('rest_not_logged_in', __('You are not logged in.', 'snn'), array('status' => 401));
+        // If result is already true or null, do nothing
+        if ($result === true || $result === null) {
+            return $result;
         }
-        return $result;
+        
+        // Early return if there's already an error
+        if (is_wp_error($result)) {
+            return $result;
+        }
+        
+        // Always allow our custom endpoints (like snn/v1 for like buttons, etc.)
+        $request_uri = isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : '';
+        if (!empty($request_uri) && strpos($request_uri, '/wp-json/snn/') !== false) {
+            return null;
+        }
+        
+        // Always allow logged-in users
+        if (is_user_logged_in()) {
+            return $result;
+        }
+        
+        // Block other endpoints for non-logged-in users
+        return new WP_Error('rest_not_logged_in', __('You are not logged in.', 'snn'), array('status' => 401));
     }
     
     /**
@@ -675,10 +690,23 @@ class SNN_Security_Optimization {
     
     /**
      * Remove WordPress block library
+     * CRITICAL: This must run AFTER Jetpack which enqueues wp-block-library
      */
     public function remove_wp_block_library() {
         wp_dequeue_style('wp-block-library');
+        wp_deregister_style('wp-block-library');
         wp_dequeue_style('wp-block-library-theme');
+        wp_deregister_style('wp-block-library-theme');
+    }
+    
+    /**
+     * Remove WordPress block library from head (fallback)
+     */
+    public function remove_wp_block_library_head() {
+        wp_dequeue_style('wp-block-library');
+        wp_deregister_style('wp-block-library');
+        wp_dequeue_style('wp-block-library-theme');
+        wp_deregister_style('wp-block-library-theme');
     }
     
     /**
@@ -691,10 +719,13 @@ class SNN_Security_Optimization {
     
     /**
      * Preload critical fonts
+     * DEPRECATED: Esta funcionalidad ha sido movida a assets-optimization.php para evitar duplicados
+     * Mantenida solo para compatibilidad con código legacy
      */
     public function preload_critical_fonts() {
-        // Add critical font preloading
-        echo '<link rel="preload" href="' . SNN_URL_ASSETS . 'fonts/pxiEyp8kv8JHgFVrFJXUc1NECPY.woff2" as="font" type="font/woff2" crossorigin>';
+        // Esta función ya no se usa - el preload de fuentes se maneja en assets-optimization.php
+        // Si necesitas agregar esta fuente específica, hazlo desde la configuración de assets-optimization
+        return;
     }
     
     /**
