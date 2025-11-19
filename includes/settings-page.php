@@ -19,7 +19,7 @@ function snn_settings_page_callback() {
     $dynamic_title = get_option('snn_menu_title', __('SNN Settings', 'snn'));
     ?>
     <div class="wrap">
-        <h1><?php echo esc_html($dynamic_title); ?> - <?php _e('Bricks Builder Child Theme Settings', 'snn'); ?></h1>
+        <h1><?php echo esc_html($dynamic_title); ?> - <?php _e('Configuración del theme hijo', 'snn'); ?></h1>
         
         <!-- Dashboard-like grid of big square buttons -->
         <div class="snn-dashboard-buttons">
