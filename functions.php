@@ -5,7 +5,26 @@
 define( 'SNN_PATH', trailingslashit( get_stylesheet_directory() ) );    
 define( 'SNN_PATH_ASSETS', trailingslashit( SNN_PATH . 'assets' ) );    
 define( 'SNN_URL', trailingslashit( get_stylesheet_directory_uri() ) ); 
-define( 'SNN_URL_ASSETS', trailingslashit( SNN_URL . 'assets' ) );  
+define( 'SNN_URL_ASSETS', trailingslashit( SNN_URL . 'assets' ) );
+
+// Disable XML-RPC early if option is set (before any other code loads)
+// This must run before WordPress processes XML-RPC requests
+add_action('init', function() {
+    $snn_security_options = get_option('snn_security_optimization_options', array());
+    if (isset($snn_security_options['disable_xmlrpc']) && $snn_security_options['disable_xmlrpc']) {
+        add_filter('xmlrpc_enabled', '__return_false', 1);
+    }
+}, 1);
+
+// Also block XML-RPC requests directly if option is set
+if (!is_admin() && isset($_SERVER['REQUEST_URI']) && strpos($_SERVER['REQUEST_URI'], '/xmlrpc.php') !== false) {
+    $snn_security_options = get_option('snn_security_optimization_options', array());
+    if (isset($snn_security_options['disable_xmlrpc']) && $snn_security_options['disable_xmlrpc']) {
+        status_header(403);
+        header('Content-Type: text/xml; charset=UTF-8');
+        die('<?xml version="1.0" encoding="UTF-8"?><methodResponse><fault><value><struct><member><name>faultCode</name><value><int>403</int></value></member><member><name>faultString</name><value><string>XML-RPC is disabled</string></value></member></struct></value></fault></methodResponse>');
+    }
+}  
 
 
 // Main Features and Settings

@@ -20,15 +20,15 @@ Optimizar el tema hijo de Bricks Builder para mejorar Core Web Vitals, seguridad
 - [x] Disable Gravatar
 
 #### Limpieza Avanzada del Head
-- [ ] Remove WP Generator
-- [ ] Remove WLW Manifest
-- [ ] Remove RSD Link
-- [ ] Remove Shortlink
-- [ ] Remove WP JSON Links
-- [ ] Remove OEmbed Links
-- [ ] Remove DNS Prefetch
-- [ ] Remove Emoji Scripts
-- [ ] Remove WP Block Library
+- [x] Remove WP Generator ✅ (implementado en head-optimization.php)
+- [x] Remove WLW Manifest ✅ (implementado en head-optimization.php)
+- [x] Remove RSD Link ✅ (implementado en head-optimization.php)
+- [x] Remove Shortlink ✅ (implementado en head-optimization.php)
+- [x] Remove WP JSON Links ✅ (implementado en head-optimization.php)
+- [x] Remove OEmbed Links ✅ (implementado en head-optimization.php)
+- [x] Remove DNS Prefetch ✅ (implementado en head-optimization.php)
+- [ ] Remove Emoji Scripts (configurable en Security & Optimization)
+- [ ] Remove WP Block Library (configurable en Security & Optimization)
 
 #### Optimización de Carga
 - [ ] Optimize CSS Loading con font preloading
@@ -46,6 +46,7 @@ Optimizar el tema hijo de Bricks Builder para mejorar Core Web Vitals, seguridad
 
 ### 1.2 Gestión Inteligente de Dashicons
 **Objetivo**: Cargar Dashicons solo cuando sea necesario (usuarios logueados con permisos de editor+).
+- [x] ✅ Implementado en head-optimization.php
 
 ### 1.3 Integración con WindPress + Tailwind v4
 **Objetivo**: Implementar arquitectura de capas CSS según [Flowtitude](https://flowtitude.com/layer-css-wordpress-tailwind).
@@ -69,35 +70,60 @@ Optimizar el tema hijo de Bricks Builder para mejorar Core Web Vitals, seguridad
 ## Fase 2: Core Web Vitals (Prioridad Alta)
 
 ### 2.1 Optimización de Imágenes
-- [ ] Conversión automática a WebP
-- [ ] Preload de imágenes críticas
-- [ ] Lazy loading inteligente
-- [ ] Optimización de tamaños responsive
+- [x] Conversión automática a WebP ✅ (implementado en webp-image-optimizer.php)
+- [x] Optimización automática de imágenes (redimensionamiento) ✅ (implementado en image-auto-optimizer.php)
+- [x] Preload de imágenes críticas ✅ (implementado)
+- [x] Lazy loading inteligente ✅ (implementado)
+- [x] Width/Height explícitos ✅ (implementado)
+- [x] Optimización de tamaños responsive ✅ (implementado)
+- [ ] LCP mejorado (fetchpriority dinámico) ⚠️ (prioridad alta)
+- [ ] Preload más específico (imagesrcset, imagesizes) ⚠️
 
 ### 2.2 Optimización de CSS/JS
-- [ ] Minificación y concatenación
-- [ ] Carga diferida de scripts no críticos
-- [ ] Eliminación de CSS no utilizado
-- [ ] Critical CSS inline
+- [ ] Minificación y concatenación ⚠️ (parcial en assets-optimization.php)
+- [ ] Carga diferida de scripts no críticos ⚠️ (parcial)
+- [ ] Eliminación de CSS no utilizado ⚠️
+- [ ] Critical CSS inline ⚠️ (prioridad alta para Speed Index)
+- [ ] Carga condicional JS completa (GSAP, Leaflet, Lottie, etc.) ⚠️ (289 KiB, prioridad alta)
+- [ ] Preconnect para dominios externos ⚠️
+- [ ] Consolidar CSS cuando sea posible ⚠️
 
 ### 2.3 Optimización de Fuentes
-- [ ] Preload de fuentes críticas
-- [ ] Font-display: swap
-- [ ] Subset de fuentes cuando sea posible
+- [ ] Preload de fuentes críticas ⚠️ (parcial)
+- [ ] Font-display: swap ⚠️
+- [ ] Subset de fuentes cuando sea posible ⚠️
+
+### 2.4 Layout Shifts (CLS)
+- [x] Width/height en imágenes ✅
+- [ ] Reservar espacio para banners/ads ⚠️
+- [ ] Evitar contenido dinámico sin reservar espacio ⚠️
+- [ ] Revisar fuentes (font-display: swap) ⚠️
+
+### 2.5 TTFB Optimization
+- [ ] Optimizar consultas pesadas en `init` y `template_redirect` ⚠️
+- [ ] Reducir autoload de `wp_options` ⚠️
+- [ ] Revisar hooks innecesarios ⚠️
+- **Nota**: Principalmente responsabilidad del servidor/Cloudflare, pero el theme puede ayudar
+
+### 2.6 DOM Optimization
+- [ ] Simplificar plantillas HTML ⚠️
+- [ ] Reducir wrappers innecesarios ⚠️
+- [ ] Límite de posts en home (configurable) ⚠️
+- **Nota**: Limitado por Bricks Builder (genera su propio HTML)
 
 ## Fase 3: Funcionalidades Avanzadas (Prioridad Media)
 
 ### 3.1 Generador de Sitemap XML
-- [ ] Creación automática de sitemap.xml
-- [ ] Integración con Google Search Console
-- [ ] Configuración de prioridades y frecuencias
-- [ ] Sitemap para imágenes y videos
+- [x] Creación automática de sitemap.xml ✅ (implementado en xml-sitemaps-generator.php)
+- [ ] Integración con Google Search Console ⚠️
+- [x] Configuración de prioridades y frecuencias ✅
+- [ ] Sitemap para imágenes y videos ⚠️
 
 ### 3.2 Sistema de Optimización de Imágenes
-- [ ] Conversión automática a WebP
-- [ ] Generación de múltiples tamaños
-- [ ] Compresión inteligente
-- [ ] Integración con CDN
+- [x] Conversión automática a WebP ✅ (ya implementado en 2.1)
+- [x] Generación de múltiples tamaños ✅ (ya implementado en 2.1)
+- [x] Compresión inteligente ✅ (ya implementado en 2.1)
+- [x] Integración con CDN ✅ (detecta Cloudflare automáticamente)
 
 ## Consideraciones Técnicas
 
@@ -134,13 +160,32 @@ Optimizar el tema hijo de Bricks Builder para mejorar Core Web Vitals, seguridad
 - Menor uso de recursos
 - Mejor experiencia de usuario
 
+## Fase 4: Accesibilidad y SEO (Prioridad Media-Baja)
+
+### 4.1 Accesibilidad
+- [ ] Revisar variables de color en CSS (contraste mínimo 4.5:1) ⚠️
+- [ ] Agregar `aria-label` a enlaces con solo iconos ⚠️
+- [ ] Revisar componentes de navegación ⚠️
+
+### 4.2 SEO
+- [ ] Agregar meta description en templates principales ⚠️
+- [ ] Usar excerpt como fallback ⚠️
+
 ## Próximos Pasos
 
-1. **Auditoría actual**: Analizar estado actual de seguridad y rendimiento
-2. **Implementación Fase 1**: Security Settings unificado
-3. **Testing**: Validar mejoras en Core Web Vitals
-4. **Iteración**: Ajustar basado en resultados
-5. **Fase 2**: Optimizaciones avanzadas
+1. **Testing**: Validar mejoras en Core Web Vitals (ver [`tests/`](../tests/))
+2. **Fase 2 - Prioridad Alta**: 
+   - LCP mejorado (fetchpriority dinámico)
+   - Carga condicional JS completa (289 KiB)
+3. **Fase 2 - Prioridad Media**: 
+   - Critical CSS inline (Speed Index)
+   - Layout Shifts (reservar espacio)
+4. **Iteración**: Ajustar basado en resultados de testing
+5. **Fase 4**: Accesibilidad y SEO
+
+## Referencias
+
+- **Tests disponibles**: [`tests/INDEX.md`](../tests/INDEX.md)
 
 ---
 

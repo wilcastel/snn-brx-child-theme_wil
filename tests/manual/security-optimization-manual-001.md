@@ -1,0 +1,229 @@
+# Test Manual: Security & Optimization - Configuraciones Básicas
+
+**ID**: `security-optimization-manual-001`  
+**Fecha**: 2025-01-XX  
+**Tester**: [NOMBRE]  
+**Estado**: 🔄 En Progreso
+
+## Objetivo
+Verificar que todas las configuraciones básicas de seguridad funcionan correctamente y se aplican según la configuración seleccionada.
+
+## Precondiciones
+- WordPress instalado y funcionando
+- Tema SNN-BRX-WIL activo
+- Usuario con permisos de administrador
+- Acceso al panel de administración
+
+## Configuraciones a Probar
+
+### 1. Disable XML-RPC
+**Configuración**: `SNN Settings > Security & Optimization > Basic Security Settings > Disable XML-RPC`
+
+#### Pasos
+1. Activar la opción "Disable XML-RPC"
+2. Guardar cambios
+3. Intentar acceder a `https://[tu-sitio]/xmlrpc.php` desde navegador
+4. Intentar hacer una petición XML-RPC con herramienta externa (Postman, curl)
+
+#### Resultado Esperado
+- ✅ La opción se guarda correctamente
+- ✅ `xmlrpc.php` devuelve error 403 o similar
+- ✅ No se puede hacer peticiones XML-RPC
+
+#### Evidencia
+- [x] ✅ Configuración guardada correctamente (verificado en admin)
+- [x] ✅ Respuesta de `xmlrpc.php`: HTTP 403 Forbidden
+- [x] ✅ Respuesta XML: `<fault><faultCode>403</faultCode><faultString>XML-RPC is disabled</faultString></fault>`
+- [x] ✅ Verificado con curl POST request
+
+#### Notas
+- Se implementó bloqueo directo en `functions.php` porque WordPress procesa XML-RPC antes de que los hooks del tema se ejecuten
+- El filtro `xmlrpc_enabled` también está registrado como respaldo
+
+---
+
+### 2. Disable JSON API for Guests
+**Configuración**: `SNN Settings > Security & Optimization > Basic Security Settings > Disable JSON API for Guests`
+
+#### Pasos
+1. Activar la opción
+2. Guardar cambios
+3. Cerrar sesión (o usar navegador en modo incógnito)
+4. Intentar acceder a `https://[tu-sitio]/wp-json/wp/v2/posts`
+5. Iniciar sesión como administrador
+6. Intentar acceder nuevamente a la misma URL
+
+#### Resultado Esperado
+- ✅ Usuarios no logueados reciben error 401/403
+- ✅ Usuarios logueados pueden acceder normalmente
+- ✅ La opción se guarda correctamente
+
+#### Evidencia
+- [ ] Captura de respuesta sin sesión
+- [ ] Captura de respuesta con sesión
+- [ ] Captura de configuración guardada
+
+---
+
+### 3. Disable File Editing
+**Configuración**: `SNN Settings > Security & Optimization > Basic Security Settings > Disable File Editing`
+
+#### Pasos
+1. Activar la opción
+2. Guardar cambios
+3. Ir a `Apariencia > Editor de temas` (o `Plugins > Editor de plugins`)
+4. Verificar que aparece mensaje de deshabilitado
+
+#### Resultado Esperado
+- ✅ No se puede acceder al editor de archivos
+- ✅ Aparece mensaje indicando que está deshabilitado
+- ✅ La constante `DISALLOW_FILE_EDIT` está definida
+
+#### Evidencia
+- [ ] Captura de pantalla del mensaje de deshabilitado
+- [ ] Verificación en código (si es posible)
+
+---
+
+### 4. Remove RSS Feeds
+**Configuración**: `SNN Settings > Security & Optimization > Basic Security Settings > Remove RSS Feeds`
+
+#### Pasos
+1. Activar la opción
+2. Guardar cambios
+3. Intentar acceder a `https://[tu-sitio]/feed/`
+4. Intentar acceder a `https://[tu-sitio]/feed/rss/`
+5. Verificar que no aparecen enlaces RSS en el `<head>`
+
+#### Resultado Esperado
+- ✅ Los feeds RSS devuelven error 404 o están deshabilitados
+- ✅ No aparecen enlaces `<link rel="alternate" type="application/rss+xml">` en el HTML
+
+#### Evidencia
+- [ ] Captura de respuesta de `/feed/`
+- [ ] Captura del código fuente HTML (sin enlaces RSS)
+- [ ] Verificación con herramienta de inspección
+
+---
+
+### 5. Hide WP Version
+**Configuración**: `SNN Settings > Security & Optimization > Basic Security Settings > Hide WP Version`
+
+#### Pasos
+1. Activar la opción
+2. Guardar cambios
+3. Verificar el código fuente HTML (buscar `generator` o versión de WP)
+4. Verificar que no aparece en `<meta name="generator">`
+5. Verificar que no aparece en URLs de recursos (`?ver=X.X.X`)
+
+#### Resultado Esperado
+- ✅ No aparece `<meta name="generator">` en el HTML
+- ✅ La función `the_generator()` devuelve string vacío
+- ✅ No se expone la versión de WordPress
+
+#### Evidencia
+- [ ] Captura del código fuente HTML (sin meta generator)
+- [ ] Verificación con herramienta de seguridad (WPScan, etc.)
+
+---
+
+### 6. Disable Bundled Themes
+**Configuración**: `SNN Settings > Security & Optimization > Basic Security Settings > Disable Bundled Themes`
+
+#### Pasos
+1. Activar la opción
+2. Guardar cambios
+3. Ir a `Apariencia > Temas`
+4. Verificar que no se instalan temas por defecto en actualizaciones
+
+#### Resultado Esperado
+- ✅ La constante `CORE_UPGRADE_SKIP_NEW_BUNDLED` está definida
+- ✅ No se instalan temas por defecto automáticamente
+
+#### Evidencia
+- [ ] Captura de pantalla de la configuración
+- [ ] Nota sobre comportamiento en actualizaciones
+
+---
+
+### 7. Enable Math Captcha
+**Configuración**: `SNN Settings > Security & Optimization > Basic Security Settings > Enable Math Captcha`
+
+#### Pasos
+1. Activar la opción
+2. Guardar cambios
+3. Ir a la página de login (`/wp-login.php`)
+4. Verificar que aparece un campo de captcha matemático
+5. Intentar hacer login sin resolver el captcha
+6. Resolver el captcha correctamente e intentar login
+
+#### Resultado Esperado
+- ✅ Aparece campo de captcha matemático en el login
+- ✅ No se puede hacer login sin resolver correctamente
+- ✅ Con captcha correcto, el login funciona normalmente
+
+#### Evidencia
+- [ ] Captura de pantalla del login con captcha
+- [ ] Captura de error al intentar login sin captcha
+- [ ] Captura de login exitoso con captcha
+
+---
+
+### 8. Disable Emojis
+**Configuración**: `SNN Settings > Security & Optimization > Basic Security Settings > Disable Emojis`
+
+#### Pasos
+1. Activar la opción
+2. Guardar cambios
+3. Verificar el código fuente HTML
+4. Buscar scripts de emojis (`wp-emoji-release.min.js`)
+5. Verificar que no se cargan scripts de emojis
+
+#### Resultado Esperado
+- ✅ No se cargan scripts de emojis de WordPress
+- ✅ No aparecen enlaces a `wp-emoji-release.min.js`
+- ✅ Se eliminan estilos inline de emojis
+
+#### Evidencia
+- [ ] Captura del código fuente HTML
+- [ ] Captura de Network tab (sin requests de emojis)
+- [ ] Verificación con DevTools
+
+---
+
+### 9. Disable Gravatar
+**Configuración**: `SNN Settings > Security & Optimization > Basic Security Settings > Disable Gravatar`
+
+#### Pasos
+1. Activar la opción
+2. Guardar cambios
+3. Verificar que no se cargan imágenes de Gravatar
+4. Verificar en comentarios o perfiles de usuario
+5. Revisar Network tab para requests a `gravatar.com`
+
+#### Resultado Esperado
+- ✅ No se cargan imágenes de Gravatar
+- ✅ No hay requests a `gravatar.com`
+- ✅ La función `get_avatar()` devuelve string vacío
+
+#### Evidencia
+- [ ] Captura de Network tab (sin requests a gravatar)
+- [ ] Captura de comentarios/perfiles sin avatares
+- [ ] Verificación en código fuente
+
+---
+
+## Resultado General
+
+- [ ] ✅ Todas las pruebas pasaron
+- [ ] ⚠️ Algunas pruebas tienen advertencias
+- [ ] ❌ Algunas pruebas fallaron
+
+## Notas Adicionales
+[Espacio para notas, problemas encontrados, sugerencias de mejora]
+
+## Próximos Pasos
+- [ ] Revisar configuraciones avanzadas (Advanced Head Cleanup)
+- [ ] Probar configuraciones de optimización de carga
+- [ ] Verificar compatibilidad con plugins comunes
+

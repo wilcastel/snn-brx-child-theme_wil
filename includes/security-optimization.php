@@ -25,8 +25,23 @@ class SNN_Security_Optimization {
     public function __construct() {
         add_action('admin_menu', array($this, 'add_admin_menu'));
         add_action('admin_init', array($this, 'register_settings'));
+        // Apply XML-RPC filter immediately if option is set (before plugins_loaded)
+        $this->apply_xmlrpc_filter_early();
+        // Use plugins_loaded with early priority for other security settings
+        add_action('plugins_loaded', array($this, 'apply_security_settings'), 1);
         add_action('init', array($this, 'apply_security_settings'));
         add_action('wp_enqueue_scripts', array($this, 'conditional_dashicons'));
+    }
+    
+    /**
+     * Apply XML-RPC filter early (before plugins_loaded)
+     * This is necessary because XML-RPC requests are processed very early
+     */
+    private function apply_xmlrpc_filter_early() {
+        $options = get_option($this->option_name, array());
+        if (isset($options['disable_xmlrpc']) && $options['disable_xmlrpc']) {
+            add_filter('xmlrpc_enabled', '__return_false', 10, 1);
+        }
     }
     
     /**
@@ -375,11 +390,42 @@ class SNN_Security_Optimization {
      * Sanitize options
      */
     public function sanitize_options($input) {
+        // Get all field IDs to ensure checkboxes are handled correctly
+        $all_fields = $this->get_all_fields();
+        $field_ids = array();
+        foreach ($all_fields as $field) {
+            $field_ids[] = $field['id'];
+        }
+        
         $sanitized = array();
+        
+        // Get current options to preserve unchecked checkboxes
+        $current_options = get_option($this->option_name, array());
         
         if (is_array($input)) {
             foreach ($input as $key => $value) {
-                $sanitized[$key] = sanitize_text_field($value);
+                if (in_array($key, $field_ids)) {
+                    // For checkboxes, value is '1' when checked
+                    if (is_numeric($value) || $value === '1' || $value === 1) {
+                        $sanitized[$key] = 1;
+                    } else {
+                        $sanitized[$key] = sanitize_text_field($value);
+                    }
+                }
+            }
+        }
+        
+        // For checkboxes not in input (unchecked), set to 0
+        foreach ($field_ids as $field_id) {
+            $field = array_filter($all_fields, function($f) use ($field_id) {
+                return $f['id'] === $field_id;
+            });
+            $field = reset($field);
+            
+            if ($field && $field['type'] === 'checkbox') {
+                if (!isset($sanitized[$field_id])) {
+                    $sanitized[$field_id] = 0;
+                }
             }
         }
         
