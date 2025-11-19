@@ -318,28 +318,33 @@ class SNN_Assets_Optimization {
     
     /**
      * Add resource hints
+     * Optimized for Core Web Vitals:
+     * - Preconnect for critical resources (fonts) - does DNS + TCP + TLS
+     * - DNS prefetch only for non-critical resources - lighter weight
      */
     public function add_resource_hints() {
-        // DNS prefetch for external domains
-        $external_domains = array(
-            'fonts.googleapis.com',
-            'fonts.gstatic.com',
-            'cdnjs.cloudflare.com',
-            'unpkg.com'
-        );
-        
-        foreach ($external_domains as $domain) {
-            echo '<link rel="dns-prefetch" href="//' . $domain . '">';
-        }
-        
-        // Preconnect to critical external resources
+        // Preconnect to critical external resources (fonts)
+        // Preconnect does DNS resolution + TCP handshake + TLS negotiation
+        // This is better than dns-prefetch for critical resources
         $critical_domains = array(
             'fonts.googleapis.com',
             'fonts.gstatic.com'
         );
         
         foreach ($critical_domains as $domain) {
-            echo '<link rel="preconnect" href="https://' . $domain . '" crossorigin>';
+            echo '<link rel="preconnect" href="https://' . esc_attr($domain) . '" crossorigin>' . "\n";
+        }
+        
+        // DNS prefetch for non-critical external domains only
+        // Only use dns-prefetch for resources that don't need immediate connection
+        // This reduces HTML size while still providing DNS resolution benefits
+        $non_critical_domains = array(
+            'cdnjs.cloudflare.com',
+            'unpkg.com'
+        );
+        
+        foreach ($non_critical_domains as $domain) {
+            echo '<link rel="dns-prefetch" href="//' . esc_attr($domain) . '">' . "\n";
         }
     }
     

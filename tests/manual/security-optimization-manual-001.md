@@ -266,6 +266,39 @@ Verificar que todas las configuraciones básicas de seguridad funcionan correcta
 
 ---
 
+## Advanced Head Cleanup
+
+### 10. Remove WP Block Library
+**Configuración**: `SNN Settings > Security & Optimization > Advanced Head Cleanup > Remove WP Block Library`
+
+#### Pasos
+1. Verificar estado actual (si wp-block-library se está cargando)
+2. Activar la opción
+3. Guardar cambios
+4. Verificar que no se carga `wp-block-library.css` en el HTML
+5. Verificar en Network tab que no hay requests a `wp-block-library`
+
+#### Resultado Esperado
+- ✅ No se carga CSS de `wp-block-library`
+- ✅ No se carga CSS de `wp-block-library-theme`
+- ✅ No hay requests a archivos de block library en Network tab
+- ✅ Mejora en el tamaño del HTML y rendimiento
+
+#### Evidencia
+- [x] ✅ No aparece `wp-block-library` en el HTML
+- [x] ✅ No aparece `wp-block-library-theme` en el HTML
+- [x] ✅ No hay referencias a block library en el código fuente
+- [x] ✅ Configuración guardada correctamente (verificado en admin)
+
+#### Notas
+- La función `remove_wp_block_library()` usa `wp_dequeue_style()` y `wp_deregister_style()` con prioridad 99999 para ejecutarse después de plugins como Jetpack
+- También tiene un fallback en `wp_head` para asegurar que se remueve incluso si se encola muy tarde
+- Esto mejora el rendimiento al eliminar CSS innecesario si no se usan bloques de Gutenberg
+- **Nota importante**: Si la opción "Remove Unused CSS" en Assets Optimization está activada (por defecto `true`), `wp-block-library` ya se remueve automáticamente. Esta opción en Security & Optimization es redundante en ese caso, pero puede ser útil si se desactiva "Remove Unused CSS"
+- **Importante**: Si el sitio usa bloques de Gutenberg, esta opción puede romper el estilo de los bloques
+
+---
+
 ## Resultado General
 
 - [ ] ✅ Todas las pruebas pasaron
