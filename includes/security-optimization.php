@@ -87,7 +87,7 @@ class SNN_Security_Optimization {
             ),
             'head_cleanup' => array(
                 'title' => __('Advanced Head Cleanup', 'snn'),
-                'description' => __('Remove unnecessary elements from HTML head.', 'snn')
+                'description' => __('Remove unnecessary elements from HTML head. Note: WP Generator, RSD Link, WLW Manifest, Shortlink, REST API links, OEmbed links, and DNS Prefetch are already removed automatically.', 'snn')
             ),
             'loading_optimization' => array(
                 'title' => __('Loading Optimization', 'snn'),
@@ -209,62 +209,8 @@ class SNN_Security_Optimization {
             ),
             
             // Advanced Head Cleanup
-            array(
-                'id' => 'remove_wp_generator',
-                'label' => __('Remove WP Generator', 'snn'),
-                'type' => 'checkbox',
-                'section' => 'head_cleanup',
-                'description' => __('Remove WordPress generator meta tag.', 'snn')
-            ),
-            array(
-                'id' => 'remove_wlw_manifest',
-                'label' => __('Remove WLW Manifest', 'snn'),
-                'type' => 'checkbox',
-                'section' => 'head_cleanup',
-                'description' => __('Remove Windows Live Writer manifest link.', 'snn')
-            ),
-            array(
-                'id' => 'remove_rsd_link',
-                'label' => __('Remove RSD Link', 'snn'),
-                'type' => 'checkbox',
-                'section' => 'head_cleanup',
-                'description' => __('Remove Really Simple Discovery link.', 'snn')
-            ),
-            array(
-                'id' => 'remove_shortlink',
-                'label' => __('Remove Shortlink', 'snn'),
-                'type' => 'checkbox',
-                'section' => 'head_cleanup',
-                'description' => __('Remove WordPress shortlink.', 'snn')
-            ),
-            array(
-                'id' => 'remove_wp_json_links',
-                'label' => __('Remove WP JSON Links', 'snn'),
-                'type' => 'checkbox',
-                'section' => 'head_cleanup',
-                'description' => __('Remove WordPress JSON API links.', 'snn')
-            ),
-            array(
-                'id' => 'remove_oembed_links',
-                'label' => __('Remove OEmbed Links', 'snn'),
-                'type' => 'checkbox',
-                'section' => 'head_cleanup',
-                'description' => __('Remove OEmbed discovery links.', 'snn')
-            ),
-            array(
-                'id' => 'remove_dns_prefetch',
-                'label' => __('Remove DNS Prefetch', 'snn'),
-                'type' => 'checkbox',
-                'section' => 'head_cleanup',
-                'description' => __('Remove DNS prefetch hints.', 'snn')
-            ),
-            array(
-                'id' => 'remove_emoji_scripts',
-                'label' => __('Remove Emoji Scripts', 'snn'),
-                'type' => 'checkbox',
-                'section' => 'head_cleanup',
-                'description' => __('Remove emoji detection scripts.', 'snn')
-            ),
+            // Note: WP Generator, RSD Link, WLW Manifest, Shortlink, REST API links, 
+            // OEmbed links, and DNS Prefetch are already removed automatically by head-optimization.php
             array(
                 'id' => 'remove_wp_block_library',
                 'label' => __('Remove WP Block Library', 'snn'),
@@ -512,38 +458,9 @@ class SNN_Security_Optimization {
         }
         
         // Advanced Head Cleanup
-        if (isset($options['remove_wp_generator']) && $options['remove_wp_generator']) {
-            remove_action('wp_head', 'wp_generator');
-        }
-        
-        if (isset($options['remove_wlw_manifest']) && $options['remove_wlw_manifest']) {
-            remove_action('wp_head', 'wlwmanifest_link');
-        }
-        
-        if (isset($options['remove_rsd_link']) && $options['remove_rsd_link']) {
-            remove_action('wp_head', 'rsd_link');
-        }
-        
-        if (isset($options['remove_shortlink']) && $options['remove_shortlink']) {
-            remove_action('wp_head', 'wp_shortlink_wp_head');
-        }
-        
-        if (isset($options['remove_wp_json_links']) && $options['remove_wp_json_links']) {
-            remove_action('wp_head', 'rest_output_link_wp_head');
-        }
-        
-        if (isset($options['remove_oembed_links']) && $options['remove_oembed_links']) {
-            remove_action('wp_head', 'wp_oembed_add_discovery_links');
-        }
-        
-        if (isset($options['remove_dns_prefetch']) && $options['remove_dns_prefetch']) {
-            remove_action('wp_head', 'wp_resource_hints', 2);
-        }
-        
-        if (isset($options['remove_emoji_scripts']) && $options['remove_emoji_scripts']) {
-            remove_action('wp_head', 'print_emoji_detection_script', 7);
-        }
-        
+        // Note: WP Generator, RSD Link, WLW Manifest, Shortlink, REST API links,
+        // OEmbed links, and DNS Prefetch are already removed automatically by head-optimization.php
+        // Emoji scripts are handled by disable_emojis() option
         if (isset($options['remove_wp_block_library']) && $options['remove_wp_block_library']) {
             // Priority 99999 to ensure it runs AFTER Jetpack and other plugins
             add_action('wp_enqueue_scripts', array($this, 'remove_wp_block_library'), 99999);
@@ -598,17 +515,8 @@ class SNN_Security_Optimization {
             return 0; // Force external files instead of inline CSS
         });
         
-        // Remove WordPress generator
-        remove_action('wp_head', 'wp_generator');
-        
-        // Remove RSD link
-        remove_action('wp_head', 'rsd_link');
-        
-        // Remove WLW manifest
-        remove_action('wp_head', 'wlwmanifest_link');
-        
-        // Remove DNS prefetch
-        remove_action('wp_head', 'wp_resource_hints', 2);
+        // Note: WP Generator, RSD Link, WLW Manifest, and DNS Prefetch are already
+        // removed automatically by head-optimization.php, so we don't duplicate here
         
         // Remove admin bar for non-admin users
         if (!current_user_can('administrator')) {
@@ -654,28 +562,31 @@ class SNN_Security_Optimization {
      * Disable JSON API for guests
      */
     public function disable_json_for_guests($result) {
-        // If result is already true or null, do nothing
-        if ($result === true || $result === null) {
-            return $result;
-        }
-        
-        // Early return if there's already an error
-        if (is_wp_error($result)) {
-            return $result;
-        }
-        
-        // Always allow our custom endpoints (like snn/v1 for like buttons, etc.)
-        $request_uri = isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : '';
-        if (!empty($request_uri) && strpos($request_uri, '/wp-json/snn/') !== false) {
-            return null;
-        }
-        
         // Always allow logged-in users
         if (is_user_logged_in()) {
             return $result;
         }
         
-        // Block other endpoints for non-logged-in users
+        // Get request URI to check for allowed endpoints
+        $request_uri = isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : '';
+        
+        // Always allow our custom endpoints (like snn/v1 for like buttons, etc.)
+        if (!empty($request_uri) && strpos($request_uri, '/wp-json/snn/') !== false) {
+            return $result; // Allow custom endpoints
+        }
+        
+        // Always allow WindPress endpoints (required for Tailwind CSS functionality)
+        if (!empty($request_uri) && strpos($request_uri, '/wp-json/windpress/') !== false) {
+            return $result; // Allow WindPress endpoints
+        }
+        
+        // If there's already an error, return it
+        if (is_wp_error($result)) {
+            return $result;
+        }
+        
+        // Block all other endpoints for non-logged-in users
+        // This includes when $result is null (public access allowed by default)
         return new WP_Error('rest_not_logged_in', __('You are not logged in.', 'snn'), array('status' => 401));
     }
     

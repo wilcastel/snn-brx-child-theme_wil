@@ -59,9 +59,14 @@ Verificar que todas las configuraciones básicas de seguridad funcionan correcta
 - ✅ La opción se guarda correctamente
 
 #### Evidencia
-- [ ] Captura de respuesta sin sesión
-- [ ] Captura de respuesta con sesión
-- [ ] Captura de configuración guardada
+- [x] ✅ Respuesta sin sesión: HTTP 401, `{"code":"rest_not_logged_in","message":"You are not logged in."}`
+- [x] ✅ Respuesta con sesión: HTTP 200, datos JSON devueltos correctamente
+- [x] ✅ Configuración guardada correctamente (verificado en admin)
+
+#### Notas
+- Se corrigió la lógica de la función `disable_json_for_guests()` para verificar primero si el usuario está logueado
+- Los endpoints personalizados (`/wp-json/snn/`) siguen funcionando para usuarios no logueados
+- Los endpoints de WindPress (`/wp-json/windpress/`) están exentos del bloqueo para mantener funcionalidad de Tailwind CSS
 
 ---
 
@@ -80,8 +85,15 @@ Verificar que todas las configuraciones básicas de seguridad funcionan correcta
 - ✅ La constante `DISALLOW_FILE_EDIT` está definida
 
 #### Evidencia
-- [ ] Captura de pantalla del mensaje de deshabilitado
-- [ ] Verificación en código (si es posible)
+- [x] ✅ Cuando está desactivado: El enlace "Editor de temas" aparece en `Apariencia > Editor de temas`
+- [x] ✅ Cuando está activado: El enlace "Editor de temas" NO aparece en el menú
+- [x] ✅ La constante `DISALLOW_FILE_EDIT` está definida como `true` cuando la opción está activada
+- [x] ✅ Configuración guardada correctamente (verificado en admin)
+
+#### Notas
+- WordPress oculta automáticamente los enlaces del editor cuando `DISALLOW_FILE_EDIT` está definida
+- No aparece mensaje explícito, simplemente desaparecen los enlaces del menú
+- Esto aplica tanto para `Apariencia > Editor de temas` como `Plugins > Editor de plugins`
 
 ---
 
@@ -96,13 +108,18 @@ Verificar que todas las configuraciones básicas de seguridad funcionan correcta
 5. Verificar que no aparecen enlaces RSS en el `<head>`
 
 #### Resultado Esperado
-- ✅ Los feeds RSS devuelven error 404 o están deshabilitados
 - ✅ No aparecen enlaces `<link rel="alternate" type="application/rss+xml">` en el HTML
+- ✅ Los feeds siguen accesibles directamente por URL (solo se eliminan los enlaces del head)
 
 #### Evidencia
-- [ ] Captura de respuesta de `/feed/`
-- [ ] Captura del código fuente HTML (sin enlaces RSS)
-- [ ] Verificación con herramienta de inspección
+- [x] ✅ Los enlaces RSS (`<link rel="alternate" type="application/rss+xml">`) han desaparecido del HTML
+- [x] ✅ El feed directo (`/feed/`) sigue accesible (comportamiento esperado - solo se eliminan enlaces del head)
+- [x] ✅ Configuración guardada correctamente (verificado en admin)
+
+#### Notas
+- La función `remove_rss_feeds()` elimina los enlaces RSS del `<head>` usando `remove_action()`
+- Los feeds siguen siendo accesibles directamente por URL (esto es intencional según la descripción de la opción)
+- Si se requiere bloquear el acceso directo a los feeds, se necesitaría implementar un bloqueo adicional
 
 ---
 
@@ -122,8 +139,15 @@ Verificar que todas las configuraciones básicas de seguridad funcionan correcta
 - ✅ No se expone la versión de WordPress
 
 #### Evidencia
-- [ ] Captura del código fuente HTML (sin meta generator)
-- [ ] Verificación con herramienta de seguridad (WPScan, etc.)
+- [x] ✅ No aparece `<meta name="generator">` en el HTML
+- [x] ✅ No aparece la versión de WordPress en los feeds RSS
+- [x] ✅ No se encuentra ninguna referencia a "generator" o "wp-version" en el código fuente
+- [x] ✅ Configuración guardada correctamente (verificado en admin)
+
+#### Notas
+- La función `apply_head_optimizations()` ya elimina el meta generator automáticamente (siempre activo)
+- La opción "Hide WP Version" agrega un filtro adicional `the_generator` que devuelve string vacío
+- Esto asegura que la versión no se exponga en ningún contexto (HTML, feeds RSS, etc.)
 
 ---
 
@@ -141,8 +165,14 @@ Verificar que todas las configuraciones básicas de seguridad funcionan correcta
 - ✅ No se instalan temas por defecto automáticamente
 
 #### Evidencia
-- [ ] Captura de pantalla de la configuración
-- [ ] Nota sobre comportamiento en actualizaciones
+- [x] ✅ La constante `CORE_UPGRADE_SKIP_NEW_BUNDLED` se define cuando la opción está activada
+- [x] ✅ Configuración guardada correctamente (verificado en admin)
+- [x] ✅ La implementación usa `define('CORE_UPGRADE_SKIP_NEW_BUNDLED', true)` en `apply_security_settings()`
+
+#### Notas
+- La constante `CORE_UPGRADE_SKIP_NEW_BUNDLED` es una constante de WordPress core que previene la instalación automática de temas por defecto (como Twenty Twenty-Four, etc.) durante las actualizaciones de WordPress
+- El efecto solo se verá en la próxima actualización de WordPress
+- Esta es una medida de seguridad que reduce el número de temas instalados y potencialmente vulnerables
 
 ---
 
@@ -163,9 +193,18 @@ Verificar que todas las configuraciones básicas de seguridad funcionan correcta
 - ✅ Con captcha correcto, el login funciona normalmente
 
 #### Evidencia
-- [ ] Captura de pantalla del login con captcha
-- [ ] Captura de error al intentar login sin captcha
-- [ ] Captura de login exitoso con captcha
+- [x] ✅ Aparece campo de captcha matemático en el login (verificado visualmente)
+- [x] ✅ El botón de login se deshabilita cuando el captcha está vacío o es incorrecto
+- [x] ✅ El botón de login solo se habilita cuando el resultado del captcha es correcto
+- [x] ✅ Configuración guardada correctamente (verificado en admin)
+
+#### Notas
+- El captcha se implementa en `login-math-captcha.php` y se incluye cuando la opción está activada
+- El captcha aparece en: login, registro, recuperación de contraseña, y comentarios (para usuarios no logueados)
+- Tiene validación en JavaScript (deshabilita el botón hasta que sea correcto) y validación en PHP (valida en el servidor)
+- Usa un canvas para mostrar la pregunta matemática de forma visual
+- La validación en JavaScript previene envíos con respuestas incorrectas, mejorando la UX
+- La validación en PHP asegura la seguridad incluso si JavaScript está deshabilitado
 
 ---
 
@@ -185,9 +224,16 @@ Verificar que todas las configuraciones básicas de seguridad funcionan correcta
 - ✅ Se eliminan estilos inline de emojis
 
 #### Evidencia
-- [ ] Captura del código fuente HTML
-- [ ] Captura de Network tab (sin requests de emojis)
-- [ ] Verificación con DevTools
+- [x] ✅ No aparecen scripts de emojis (`wp-emoji-release.min.js`) en el HTML
+- [x] ✅ No aparecen referencias a `print_emoji` en el código fuente
+- [x] ✅ Los scripts de emojis no se están cargando en el frontend
+- [x] ✅ Configuración guardada correctamente (verificado en admin)
+
+#### Notas
+- La función `disable_emojis()` remueve scripts y estilos de emojis tanto en frontend como en admin
+- También remueve filtros de emojis en feeds, emails y embeds
+- Desactiva el plugin de emojis en TinyMCE (editor de WordPress)
+- Esto mejora el rendimiento al eliminar scripts innecesarios
 
 ---
 
@@ -207,9 +253,16 @@ Verificar que todas las configuraciones básicas de seguridad funcionan correcta
 - ✅ La función `get_avatar()` devuelve string vacío
 
 #### Evidencia
-- [ ] Captura de Network tab (sin requests a gravatar)
-- [ ] Captura de comentarios/perfiles sin avatares
-- [ ] Verificación en código fuente
+- [x] ✅ No aparecen referencias a `gravatar.com` en el HTML
+- [x] ✅ No se cargan imágenes de Gravatar
+- [x] ✅ La función `get_avatar()` devuelve string vacío cuando la opción está activada
+- [x] ✅ Configuración guardada correctamente (verificado en admin)
+
+#### Notas
+- La función `get_avatar()` devuelve un string vacío cuando la opción está activada
+- Esto previene requests a `gravatar.com`, mejorando la privacidad y el rendimiento
+- Los avatares no se mostrarán en comentarios, perfiles de usuario, etc.
+- Esto es especialmente útil para cumplir con regulaciones de privacidad (GDPR) al evitar requests a servicios externos
 
 ---
 
