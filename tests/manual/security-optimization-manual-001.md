@@ -308,8 +308,71 @@ Verificar que todas las configuraciones básicas de seguridad funcionan correcta
 ## Notas Adicionales
 [Espacio para notas, problemas encontrados, sugerencias de mejora]
 
+---
+
+## Loading Optimization
+
+### 11. Optimize CSS Loading
+**Configuración**: `SNN Settings > Security & Optimization > Loading Optimization > Optimize CSS Loading`
+
+#### Pasos
+1. Activar la opción
+2. Guardar cambios
+3. Verificar que aparece `<link rel="preload" as="style">` en el HTML
+4. Verificar que el CSS se carga con optimización
+
+#### Resultado Esperado
+- ✅ Aparece `<link rel="preload" as="style">` para el stylesheet principal
+- ✅ El CSS se carga de forma optimizada
+- ✅ Mejora en el rendimiento de carga
+
+#### Evidencia
+- [x] ✅ Aparece `<link rel="preload" as="style">` para el stylesheet principal (`style.css`)
+- [x] ✅ El preload incluye `onload="this.onload=null;this.rel='stylesheet'"` para convertir el preload en stylesheet
+- [x] ✅ Configuración guardada correctamente (verificado en admin)
+
+#### Notas
+- La función `optimize_css_loading()` detecta automáticamente y agrega preload a estilos críticos:
+  - Stylesheet principal del tema hijo (`style.css`)
+  - Bricks Builder CSS (`bricks-frontend`)
+  - CSS específico del tema (`snn-theme-specific`)
+  - **WindPress observer script** (procesa el CSS compilado de Tailwind CSS)
+- Si Bricks Builder o otros sistemas generan más hojas de estilo CSS críticas, se pueden agregar a la lista `$critical_handles` para preload automático
+- **Nota sobre WindPress**: WindPress inyecta su CSS compilado de Tailwind mediante scripts (`windpress:metadata`, `windpress:vfs`), no como stylesheet tradicional. Por lo tanto, se preload el script observer de WindPress que procesa el CSS, mejorando la carga del CSS de Tailwind
+- Usa la técnica de "preload as style" con `onload` para convertir el preload en stylesheet cuando se carga
+- Incluye fallback `<noscript>` para navegadores sin JavaScript
+- Esto mejora el LCP (Largest Contentful Paint) al cargar CSS crítico más rápido
+- El preload se ejecuta antes que el stylesheet normal, mejorando el tiempo de renderizado
+
+#### Notas
+- La función `optimize_css_loading()` agrega un preload para el stylesheet principal
+- Usa `onload` para convertir el preload en stylesheet cuando se carga
+- Esto mejora el LCP (Largest Contentful Paint) al cargar CSS crítico más rápido
+
+---
+
+### 12. Preload Critical Fonts
+**Configuración**: `SNN Settings > Security & Optimization > Loading Optimization > Preload Critical Fonts`
+
+#### Notas
+- ⚠️ Esta opción está comentada/deprecada
+- La funcionalidad se movió a `assets-optimization.php` para evitar duplicados
+- El preload de fuentes se maneja desde la configuración de Assets Optimization
+
+---
+
+### 13-15. Keep Meta Tags (Essential, Social, SEO)
+**Configuración**: `SNN Settings > Security & Optimization > Loading Optimization > Keep Essential/Social/SEO Meta`
+
+#### Notas
+- ⚠️ Estas opciones están definidas pero **NO están implementadas**
+- Son opciones para mantener meta tags específicos cuando se hace limpieza del head
+- Requieren implementación si se desea usar
+
+---
+
 ## Próximos Pasos
-- [ ] Revisar configuraciones avanzadas (Advanced Head Cleanup)
-- [ ] Probar configuraciones de optimización de carga
+- [ ] Revisar configuraciones avanzadas (Advanced Head Cleanup) ✅
+- [ ] Probar configuraciones de optimización de carga (en progreso)
 - [ ] Verificar compatibilidad con plugins comunes
 

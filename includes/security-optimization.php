@@ -470,7 +470,8 @@ class SNN_Security_Optimization {
         
         // Loading Optimization
         if (isset($options['optimize_css_loading']) && $options['optimize_css_loading']) {
-            add_action('wp_head', array($this, 'optimize_css_loading'), 1);
+            // Use priority 5 to ensure styles are registered before we detect them
+            add_action('wp_head', array($this, 'optimize_css_loading'), 5);
         }
         
         // Preload de fuentes movido a assets-optimization.php para evitar duplicados
@@ -670,8 +671,99 @@ class SNN_Security_Optimization {
      * Optimize CSS loading
      */
     public function optimize_css_loading() {
-        // Add font preloading and CSS optimization
-        echo '<link rel="preload" href="' . get_stylesheet_uri() . '" as="style" onload="this.onload=null;this.rel=\'stylesheet\'">';
+        // Get all enqueued styles
+        global $wp_styles;
+        $critical_styles = array();
+        
+        // Always preload the main theme stylesheet
+        $main_stylesheet = get_stylesheet_uri();
+        if ($main_stylesheet) {
+            $critical_styles[] = $main_stylesheet;
+        }
+        
+        // Add critical stylesheets that should be preloaded
+        // These are typically loaded early and are important for LCP
+        $critical_handles = array(
+            'bricks-frontend',        // Bricks Builder main CSS (critical for rendering)
+            'snn-theme-specific',     // Theme-specific CSS
+        );
+        
+        // Note: WindPress CSS is injected via scripts (windpress:metadata, windpress:vfs)
+        // and cannot be preloaded as a traditional stylesheet. The CSS is compiled
+        // dynamically by the WindPress observer script, so preloading the observer
+        // script itself would be more beneficial. However, since it's already loaded
+        // with defer, we focus on preloading traditional stylesheets only.
+        
+        if (isset($wp_styles) && is_object($wp_styles)) {
+            foreach ($critical_handles as $handle) {
+                if (isset($wp_styles->registered[$handle])) {
+                    $style = $wp_styles->registered[$handle];
+                    $src = $style->src;
+                    
+                    // Get the full URL using wp_style_loader_src filter logic
+                    if (!preg_match('/^(https?:)?\/\//', $src)) {
+                        // Relative URL - convert to absolute
+                        if (strpos($src, '/') === 0) {
+                            // Absolute path from root
+                            $src = site_url($src);
+                        } else {
+                            // Relative path - prepend stylesheet directory
+                            $src = get_stylesheet_directory_uri() . '/' . $src;
+                        }
+                    }
+                    
+                    // Add version query if exists
+                    if (!empty($style->ver)) {
+                        $src = add_query_arg('ver', $style->ver, $src);
+                    }
+                    
+                    // Avoid duplicates
+                    if (!in_array($src, $critical_styles)) {
+                        $critical_styles[] = $src;
+                    }
+                }
+            }
+        }
+        
+        // Output preload links for critical stylesheets
+        foreach ($critical_styles as $stylesheet_url) {
+            echo '<link rel="preload" href="' . esc_url($stylesheet_url) . '" as="style" onload="this.onload=null;this.rel=\'stylesheet\'">' . "\n";
+        }
+        
+        // Preload WindPress observer script (processes Tailwind CSS)
+        // WindPress injects CSS via scripts (windpress:metadata, windpress:vfs),
+        // so preloading the observer script helps load Tailwind CSS faster
+        // Note: WindPress scripts are injected directly, not via wp_enqueue_script,
+        // so we need to check if the plugin is active and construct the path
+        if (!function_exists('is_plugin_active')) {
+            require_once(ABSPATH . 'wp-admin/includes/plugin.php');
+        }
+        
+        if (is_plugin_active('windpress/windpress.php') || 
+            defined('WINDPRESS_VERSION') || 
+            class_exists('WindPress')) {
+            // Try to find WindPress observer script in the plugin directory
+            $windpress_observer_pattern = WP_PLUGIN_DIR . '/windpress/build/assets/packages/core/tailwindcss/play/observer-*.js';
+            $observer_files = glob($windpress_observer_pattern);
+            
+            if (!empty($observer_files)) {
+                // Get the most recent observer file (in case there are multiple versions)
+                $observer_file = end($observer_files);
+                $observer_url = str_replace(WP_PLUGIN_DIR, plugins_url(), $observer_file);
+                
+                // Preload as script (it's JavaScript that processes the CSS)
+                echo '<link rel="preload" href="' . esc_url($observer_url) . '" as="script">' . "\n";
+            }
+        }
+        
+        // Add noscript fallback for browsers without JavaScript
+        if (!empty($critical_styles)) {
+            echo '<noscript>' . "\n";
+            foreach ($critical_styles as $stylesheet_url) {
+                echo '<link rel="stylesheet" href="' . esc_url($stylesheet_url) . '">' . "\n";
+            }
+            echo '</noscript>' . "\n";
+        }
     }
     
     /**
