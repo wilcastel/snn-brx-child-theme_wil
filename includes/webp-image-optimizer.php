@@ -424,35 +424,122 @@ class SNN_WebP_Image_Optimizer {
     }
     
     /**
-     * Replace images in content with WebP versions (Enhanced)
+     * Replace images in content with WebP versions and optimize attributes (Enhanced)
+     * Optimizes images in post content with lazy loading, fetchpriority, and other attributes
      */
     public function replace_content_images($content) {
-        // If Cloudflare is handling WebP, let it do its job
-        if (!($this->options['enable_webp'] ?? true) || $this->is_cloudflare_webp_enabled()) {
+        if (empty($content)) {
             return $content;
         }
         
-        // Find all img tags with src attributes
-        preg_match_all('/<img[^>]+src="([^"]+)"[^>]*>/i', $content, $matches);
+        // Get critical images to determine which images should be prioritized
+        $critical_images = $this->get_critical_images();
         
-        foreach ($matches[1] as $index => $image_url) {
-            // Validar URL antes de procesar
+        // Find all img tags with their full attributes
+        preg_match_all('/<img([^>]+)>/i', $content, $matches, PREG_SET_ORDER);
+        
+        $image_index = 0;
+        foreach ($matches as $match) {
+            $full_tag = $match[0];
+            $attributes = $match[1];
+            
+            // Extract src attribute
+            if (!preg_match('/src=["\']([^"\']+)["\']/', $attributes, $src_match)) {
+                continue;
+            }
+            
+            $image_url = $src_match[1];
+            
+            // Skip if URL is invalid
             if (empty($image_url) || !filter_var($image_url, FILTER_VALIDATE_URL)) {
                 continue;
             }
             
-            $webp_url = $this->get_webp_url($image_url);
-            if ($webp_url && $webp_url !== false && filter_var($webp_url, FILTER_VALIDATE_URL)) {
-                // Replace the src attribute
-                $content = str_replace($image_url, $webp_url, $content);
-                
-                // Also replace in srcset if present
-                $content = preg_replace(
-                    '/srcset="([^"]*' . preg_quote($image_url, '/') . '[^"]*)"/i',
-                    'srcset="$1"',
-                    $content
-                );
+            // Check if this is a critical image (featured image, etc.)
+            $is_critical = in_array($image_url, $critical_images);
+            
+            // Determine if this is the first image in content (might be above the fold)
+            $is_first_content_image = ($image_index === 0 && !$is_critical);
+            
+            // Build optimized attributes
+            $optimized_attributes = $attributes;
+            
+            // 1. Replace with WebP if enabled and not Cloudflare
+            $webp_enabled = ($this->options['enable_webp'] ?? true) && !$this->is_cloudflare_webp_enabled();
+            if ($webp_enabled) {
+                $webp_url = $this->get_webp_url($image_url);
+                if ($webp_url && filter_var($webp_url, FILTER_VALIDATE_URL)) {
+                    $optimized_attributes = preg_replace(
+                        '/src=["\']' . preg_quote($image_url, '/') . '["\']/',
+                        'src="' . esc_attr($webp_url) . '"',
+                        $optimized_attributes
+                    );
+                    
+                    // Also replace in srcset if present
+                    $optimized_attributes = preg_replace_callback(
+                        '/srcset=["\']([^"\']*' . preg_quote($image_url, '/') . '[^"\']*)["\']/i',
+                        function($matches) use ($image_url, $webp_url) {
+                            return 'srcset="' . str_replace($image_url, $webp_url, $matches[1]) . '"';
+                        },
+                        $optimized_attributes
+                    );
+                }
             }
+            
+            // 2. Add loading attribute (lazy for non-critical images)
+            if (!preg_match('/\sloading=["\']/', $optimized_attributes)) {
+                if ($is_critical || $is_first_content_image) {
+                    // Critical images or first content image: load eagerly
+                    $optimized_attributes .= ' loading="eager"';
+                } else {
+                    // Other images: lazy load
+                    $optimized_attributes .= ' loading="lazy"';
+                }
+            }
+            
+            // 3. Add fetchpriority attribute
+            if (!preg_match('/\sfetchpriority=["\']/', $optimized_attributes)) {
+                if ($is_critical) {
+                    // Critical images already handled by add_lazy_loading filter
+                    // Don't add here to avoid conflicts
+                } else {
+                    // All content images get low priority to not compete with LCP
+                    $optimized_attributes .= ' fetchpriority="low"';
+                }
+            }
+            
+            // 4. Add decoding attribute for better performance
+            if (!preg_match('/\sdecoding=["\']/', $optimized_attributes)) {
+                if ($is_critical || $is_first_content_image) {
+                    $optimized_attributes .= ' decoding="sync"';
+                } else {
+                    $optimized_attributes .= ' decoding="async"';
+                }
+            }
+            
+            // 5. Try to add width and height if missing (prevents CLS)
+            if (!preg_match('/\swidth=["\']/', $optimized_attributes) || !preg_match('/\sheight=["\']/', $optimized_attributes)) {
+                // Try to get attachment ID from URL
+                $attachment_id = attachment_url_to_postid($image_url);
+                if ($attachment_id) {
+                    $metadata = wp_get_attachment_metadata($attachment_id);
+                    if ($metadata && isset($metadata['width']) && isset($metadata['height'])) {
+                        // Add width and height if not present
+                        if (!preg_match('/\swidth=["\']/', $optimized_attributes)) {
+                            $optimized_attributes .= ' width="' . esc_attr($metadata['width']) . '"';
+                        }
+                        if (!preg_match('/\sheight=["\']/', $optimized_attributes)) {
+                            $optimized_attributes .= ' height="' . esc_attr($metadata['height']) . '"';
+                        }
+                    }
+                }
+            }
+            
+            // Replace the original img tag with optimized version
+            $optimized_tag = '<img' . $optimized_attributes . '>';
+            $content = str_replace($full_tag, $optimized_tag, $content);
+            
+            $image_index++;
         }
         
         return $content;
@@ -479,7 +566,7 @@ class SNN_WebP_Image_Optimizer {
         $critical_images = array_slice($critical_images, 0, $max_critical_images);
         
         $preloaded_count = 0;
-        foreach ($critical_images as $image_url) {
+        foreach ($critical_images as $index => $image_url) {
             try {
                 // Validar URL antes de preload
                 if (empty($image_url) || !filter_var($image_url, FILTER_VALIDATE_URL)) {
@@ -491,13 +578,18 @@ class SNN_WebP_Image_Optimizer {
                     break;
                 }
                 
+                // Solo la primera imagen crítica (LCP candidate) debe tener fetchpriority="high"
+                // Las demás deben tener fetchpriority="auto" o no tener el atributo
+                // Esto ayuda al navegador a priorizar correctamente el LCP
+                $fetchpriority = ($index === 0) ? 'high' : 'auto';
+                
                 // Preferir WebP si existe, sino preload la original
                 $webp_url = $this->get_webp_url($image_url);
                 if ($webp_url && filter_var($webp_url, FILTER_VALIDATE_URL)) {
-                    echo '<link rel="preload" as="image" href="' . esc_url($webp_url) . '" fetchpriority="high" type="image/webp">' . "\n";
+                    echo '<link rel="preload" as="image" href="' . esc_url($webp_url) . '" fetchpriority="' . esc_attr($fetchpriority) . '" type="image/webp">' . "\n";
                 } else {
                     // Solo preload original si no hay WebP
-                    echo '<link rel="preload" as="image" href="' . esc_url($image_url) . '" fetchpriority="high">' . "\n";
+                    echo '<link rel="preload" as="image" href="' . esc_url($image_url) . '" fetchpriority="' . esc_attr($fetchpriority) . '">' . "\n";
                 }
                 
                 $preloaded_count++;
@@ -513,6 +605,7 @@ class SNN_WebP_Image_Optimizer {
     
     /**
      * Get critical images for preloading
+     * Priority order: Featured image > First content image > First gallery image > Logo
      */
     private function get_critical_images() {
         // Usar caché estático para evitar consultas múltiples
@@ -523,13 +616,32 @@ class SNN_WebP_Image_Optimizer {
         
         $critical_images = array();
         
-        // Get featured image of current post
+        // Get featured image of current post (highest priority for LCP)
         if (is_singular()) {
+            global $post;
+            
+            // 1. Featured image (highest priority)
             $featured_image_id = get_post_thumbnail_id();
             if ($featured_image_id) {
                 $featured_image_url = wp_get_attachment_image_url($featured_image_id, 'large');
                 if ($featured_image_url) {
                     $critical_images[] = $featured_image_url;
+                }
+            }
+            
+            // 2. If no featured image, get first image from post content
+            if (empty($critical_images) && $post) {
+                $first_content_image = $this->get_first_content_image($post);
+                if ($first_content_image) {
+                    $critical_images[] = $first_content_image;
+                }
+            }
+            
+            // 3. If still no image, get first image from WordPress gallery
+            if (empty($critical_images) && $post) {
+                $first_gallery_image = $this->get_first_gallery_image($post);
+                if ($first_gallery_image) {
+                    $critical_images[] = $first_gallery_image;
                 }
             }
         }
@@ -586,9 +698,137 @@ class SNN_WebP_Image_Optimizer {
             }
         }
         
+        // Get logo from theme mod (only if no post images found)
+        // Logo is lower priority than post images for LCP
+        if (empty($critical_images)) {
+            $custom_logo_id = get_theme_mod('custom_logo');
+            if ($custom_logo_id) {
+                $logo_url = wp_get_attachment_image_url($custom_logo_id, 'full');
+                if ($logo_url) {
+                    $critical_images[] = $logo_url;
+                }
+            }
+        }
+        
+        // Find logo images by filename pattern (for Bricks Builder usage)
+        // Only if no post images found
+        if (empty($critical_images)) {
+            $logo_file_patterns = array('logo-dln', 'logo', 'brand');
+            
+            // Search for logo files in uploads (limitado para rendimiento)
+            foreach ($logo_file_patterns as $pattern) {
+                $args = array(
+                    'post_type' => 'attachment',
+                    'post_mime_type' => 'image',
+                    'posts_per_page' => 1,
+                    'post_status' => 'inherit',
+                    'meta_query' => array(
+                        array(
+                            'key' => '_wp_attached_file',
+                            'value' => $pattern,
+                            'compare' => 'LIKE'
+                        )
+                    )
+                );
+                
+                $logo_attachments = get_posts($args);
+                foreach ($logo_attachments as $attachment) {
+                    $logo_url = wp_get_attachment_image_url($attachment->ID, 'full');
+                    if ($logo_url) {
+                        $critical_images[] = $logo_url;
+                        break 2; // Break both loops
+                    }
+                }
+            }
+        }
+        
+        // Get custom critical images from options (always add these)
+        $custom_images = $this->options['critical_images'] ?? '';
+        if ($custom_images) {
+            $lines = explode("\n", $custom_images);
+            foreach ($lines as $line) {
+                $line = trim($line);
+                if ($line && filter_var($line, FILTER_VALIDATE_URL)) {
+                    $critical_images[] = $line;
+                }
+            }
+        }
+        
         // Guardar en caché estático
         $cached_images = array_unique($critical_images);
         return $cached_images;
+    }
+    
+    /**
+     * Get first image from post content
+     * Extracts the first <img> tag from post content
+     */
+    private function get_first_content_image($post) {
+        if (!$post || empty($post->post_content)) {
+            return null;
+        }
+        
+        $content = $post->post_content;
+        
+        // Try to find first image tag
+        if (preg_match('/<img[^>]+src=["\']([^"\']+)["\']/', $content, $matches)) {
+            $image_url = esc_url($matches[1]);
+            
+            // Convert relative URLs to absolute
+            if (strpos($image_url, 'http') !== 0) {
+                $image_url = home_url($image_url);
+            }
+            
+            // Try to get attachment ID from URL
+            $attachment_id = attachment_url_to_postid($image_url);
+            if ($attachment_id) {
+                // Get proper image size URL
+                $image_url = wp_get_attachment_image_url($attachment_id, 'large');
+            }
+            
+            return $image_url ?: null;
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Get first image from WordPress gallery
+     * Extracts the first image from [gallery] shortcode
+     */
+    private function get_first_gallery_image($post) {
+        if (!$post || empty($post->post_content)) {
+            return null;
+        }
+        
+        $content = $post->post_content;
+        
+        // Check if there's a gallery shortcode
+        if (has_shortcode($content, 'gallery')) {
+            // Get gallery shortcode attributes
+            preg_match('/\[gallery[^\]]*ids=["\']([^"\']+)["\'][^\]]*\]/', $content, $matches);
+            
+            if (!empty($matches[1])) {
+                // Get first image ID from gallery
+                $image_ids = explode(',', $matches[1]);
+                $first_image_id = intval(trim($image_ids[0]));
+                
+                if ($first_image_id > 0) {
+                    $image_url = wp_get_attachment_image_url($first_image_id, 'large');
+                    return $image_url ?: null;
+                }
+            } else {
+                // Gallery without explicit IDs - get attached images
+                $attachments = get_attached_media('image', $post->ID);
+                if (!empty($attachments)) {
+                    $first_attachment = reset($attachments);
+                    $image_url = wp_get_attachment_image_url($first_attachment->ID, 'large');
+                    return $image_url ?: null;
+                }
+            }
+        }
+        
+        return null;
     }
     
     /**
@@ -599,40 +839,80 @@ class SNN_WebP_Image_Optimizer {
             return $attr;
         }
         
-        // Skip lazy loading for critical images
-        $critical_images = $this->get_critical_images();
-        $current_image_url = wp_get_attachment_image_url($attachment->ID, $size);
-        
-        if (in_array($current_image_url, $critical_images)) {
-            return $attr;
+        // Check if this is the featured image by attachment ID (more reliable than URL comparison)
+        $is_featured_image = false;
+        if (is_singular()) {
+            $featured_image_id = get_post_thumbnail_id();
+            if ($featured_image_id && $attachment->ID == $featured_image_id) {
+                $is_featured_image = true;
+            }
         }
         
-        // Skip lazy loading for logo images (common logo file names and patterns)
-        $file_path = get_attached_file($attachment->ID);
-        if ($file_path) {
-            $file_name = basename($file_path);
-            $file_name_lower = strtolower($file_name);
-            
-            // Check for logo patterns
-            $logo_patterns = array('logo', 'brand', 'header-logo', 'site-logo', 'logo-dln');
-            foreach ($logo_patterns as $pattern) {
-                if (strpos($file_name_lower, $pattern) !== false) {
-                    return $attr;
+        // Also check by URL for other critical images (logo, etc.)
+        $critical_images = $this->get_critical_images();
+        $current_image_url = wp_get_attachment_image_url($attachment->ID, $size);
+        $is_critical_by_url = in_array($current_image_url, $critical_images);
+        
+        // Check all size variants of critical images
+        if (!$is_critical_by_url && !empty($critical_images)) {
+            foreach ($critical_images as $critical_url) {
+                // Try to get attachment ID from critical URL
+                $critical_attachment_id = attachment_url_to_postid($critical_url);
+                if ($critical_attachment_id && $attachment->ID == $critical_attachment_id) {
+                    $is_critical_by_url = true;
+                    break;
                 }
             }
         }
         
-        // Skip lazy loading if image already has class indicating it's critical or in header
-        $existing_class = $attr['class'] ?? '';
-        if (!empty($existing_class)) {
-            $critical_classes = array('logo', 'site-logo', 'header-logo', 'brand', 'critical-image', 'no-lazy');
-            $class_array = explode(' ', $existing_class);
-            foreach ($class_array as $class) {
-                foreach ($critical_classes as $critical_class) {
-                    if (stripos($class, $critical_class) !== false) {
-                        return $attr;
+        $is_critical = $is_featured_image || $is_critical_by_url;
+        
+        // Check for logo images by filename pattern
+        if (!$is_critical) {
+            $file_path = get_attached_file($attachment->ID);
+            if ($file_path) {
+                $file_name = basename($file_path);
+                $file_name_lower = strtolower($file_name);
+                
+                // Check for logo patterns
+                $logo_patterns = array('logo', 'brand', 'header-logo', 'site-logo', 'logo-dln');
+                foreach ($logo_patterns as $pattern) {
+                    if (strpos($file_name_lower, $pattern) !== false) {
+                        $is_critical = true;
+                        break;
                     }
                 }
+            }
+        }
+        
+        // Check for critical classes
+        if (!$is_critical) {
+            $existing_class = $attr['class'] ?? '';
+            if (!empty($existing_class)) {
+                $critical_classes = array('logo', 'site-logo', 'header-logo', 'brand', 'critical-image', 'no-lazy');
+                $class_array = explode(' ', $existing_class);
+                foreach ($class_array as $class) {
+                    foreach ($critical_classes as $critical_class) {
+                        if (stripos($class, $critical_class) !== false) {
+                            $is_critical = true;
+                            break 2;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // For critical images (especially featured image), ensure optimal attributes
+        if ($is_critical) {
+            $attr['loading'] = 'eager';
+            $attr['decoding'] = 'sync';
+            
+            // Featured image should have highest priority (LCP candidate)
+            if ($is_featured_image) {
+                $attr['fetchpriority'] = 'high';
+            } else {
+                // Other critical images (logo, etc.) get auto priority
+                $attr['fetchpriority'] = 'auto';
             }
         }
         
@@ -656,11 +936,11 @@ class SNN_WebP_Image_Optimizer {
         }
         
         // Add lazy loading attributes solo si no es crítica
-        $is_critical = in_array($current_image_url, $critical_images);
-        
         if (!$is_critical) {
             $attr['loading'] = 'lazy';
             $attr['decoding'] = 'async';
+            // Aplicar fetchpriority="low" a imágenes no críticas para que el navegador priorice la LCP
+            $attr['fetchpriority'] = 'low';
             
             // Add placeholder solo si está habilitado
             if ($this->options['enable_placeholder'] ?? true) {
@@ -670,11 +950,6 @@ class SNN_WebP_Image_Optimizer {
                 $attr['src'] = $this->get_placeholder_image($attachment->ID);
                 $attr['class'] = ($attr['class'] ?? '') . ' snn-lazy-image';
             }
-        } else {
-            // Para imágenes críticas, cargar inmediatamente
-            $attr['loading'] = 'eager';
-            $attr['decoding'] = 'sync';
-            $attr['fetchpriority'] = 'high';
         }
         
         return $attr;

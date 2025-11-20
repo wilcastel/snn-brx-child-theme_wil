@@ -75,7 +75,7 @@ Optimizar el tema hijo de Bricks Builder para mejorar Core Web Vitals, seguridad
 - [x] Lazy loading inteligente ✅ (implementado)
 - [x] Width/Height explícitos ✅ (implementado)
 - [x] Optimización de tamaños responsive ✅ (implementado)
-- [ ] LCP mejorado (fetchpriority dinámico) ⚠️ (prioridad alta)
+- [x] LCP mejorado (fetchpriority dinámico) ✅ (implementado - solo la primera imagen crítica tiene fetchpriority="high", detecta featured image, primera imagen del contenido, y primera imagen de galerías)
 - [ ] Preload más específico (imagesrcset, imagesizes) ⚠️
 
 ### 2.2 Optimización de CSS/JS
