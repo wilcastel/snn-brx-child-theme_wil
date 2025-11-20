@@ -361,13 +361,62 @@ Verificar que todas las configuraciones básicas de seguridad funcionan correcta
 
 ---
 
-### 13-15. Keep Meta Tags (Essential, Social, SEO)
-**Configuración**: ~~`SNN Settings > Security & Optimization > Loading Optimization > Keep Essential/Social/SEO Meta`~~
+### 13. Keep Social Meta Tags
+**Configuración**: `SNN Settings > Security & Optimization > Loading Optimization > Keep Social Meta Tags`
 
-#### Estado
-- ❌ **ELIMINADAS**: Estas opciones fueron eliminadas de Security & Optimization
-- ⚠️ No estaban implementadas y no se utilizaban
-- Si se necesita esta funcionalidad en el futuro, se puede implementar en `head-optimization.php`
+#### Pasos
+1. Activar la opción "Keep Social Meta Tags"
+2. Guardar cambios
+3. Abrir cualquier post o página del sitio
+4. Ver código fuente HTML (verificar en el `<head>`)
+5. Buscar meta tags Open Graph y Twitter Cards
+6. Probar compartir en WhatsApp, Facebook o Twitter
+
+#### Resultado Esperado
+- ✅ Se generan meta tags Open Graph (`og:title`, `og:description`, `og:image`, `og:url`, etc.)
+- ✅ Se generan meta tags Twitter Cards (`twitter:card`, `twitter:title`, `twitter:description`, `twitter:image`)
+- ✅ Las imágenes se optimizan para compartir (1200x630px recomendado para WhatsApp)
+- ✅ Las URLs son absolutas y usan HTTPS
+- ✅ Al compartir en WhatsApp/Facebook/Twitter, se muestra correctamente la imagen, título y descripción
+- ✅ Si hay plugins de SEO activos (Yoast, Rank Math, AIOSEO), no se duplican las meta tags
+
+#### Evidencia
+- [ ] Captura del código fuente mostrando las meta tags Open Graph
+- [ ] Captura del código fuente mostrando las meta tags Twitter Cards
+- [ ] Captura de prueba de compartir en WhatsApp mostrando la imagen correcta
+- [ ] Captura de prueba de compartir en Facebook mostrando la preview correcta
+
+#### Notas
+- Esta funcionalidad solo se activa si NO hay plugins de SEO activos (Yoast, Rank Math, AIOSEO)
+- Si hay plugins de SEO, estos manejan las meta tags sociales y no se duplican
+- Las imágenes se obtienen de: featured image > primera imagen del contenido > logo del sitio
+- Las imágenes se optimizan automáticamente para compartir en redes sociales
+
+---
+
+### 14. Keep SEO Meta Tags
+**Configuración**: `SNN Settings > Security & Optimization > Loading Optimization > Keep SEO Meta Tags`
+
+#### Pasos
+1. Activar la opción "Keep SEO Meta Tags"
+2. Guardar cambios
+3. Abrir cualquier post o página del sitio
+4. Ver código fuente HTML (verificar en el `<head>`)
+5. Buscar meta tags canonical y robots
+
+#### Resultado Esperado
+- ✅ Se genera meta tag canonical en posts/páginas individuales
+- ✅ Se genera meta tag canonical en la página de inicio
+- ✅ Se genera meta tag robots="noindex, follow" en páginas de búsqueda, 404, fechas y autores
+- ✅ Si hay plugins de SEO activos (Yoast, Rank Math, AIOSEO), no se duplican las meta tags
+
+#### Evidencia
+- [ ] Captura del código fuente mostrando la meta tag canonical
+- [ ] Captura del código fuente mostrando la meta tag robots en páginas de búsqueda
+
+#### Notas
+- Esta funcionalidad solo se activa si NO hay plugins de SEO activos (Yoast, Rank Math, AIOSEO)
+- Si hay plugins de SEO, estos manejan las meta tags SEO y no se duplican
 
 ---
 

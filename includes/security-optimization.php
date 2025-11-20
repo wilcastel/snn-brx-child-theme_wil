@@ -227,6 +227,20 @@ class SNN_Security_Optimization {
                 'section' => 'loading_optimization',
                 'description' => __('Optimize CSS loading with font preloading.', 'snn')
             ),
+            array(
+                'id' => 'keep_social_meta',
+                'label' => __('Keep Social Meta Tags', 'snn'),
+                'type' => 'checkbox',
+                'section' => 'loading_optimization',
+                'description' => __('Generate Open Graph and Twitter Card meta tags for social media sharing (WhatsApp, Facebook, Twitter, etc.).', 'snn')
+            ),
+            array(
+                'id' => 'keep_seo_meta',
+                'label' => __('Keep SEO Meta Tags', 'snn'),
+                'type' => 'checkbox',
+                'section' => 'loading_optimization',
+                'description' => __('Generate canonical and robots meta tags for SEO.', 'snn')
+            ),
             
             // Protocol Settings
             array(
@@ -444,6 +458,17 @@ class SNN_Security_Optimization {
         if (isset($options['optimize_css_loading']) && $options['optimize_css_loading']) {
             // Use priority 5 to ensure styles are registered before we detect them
             add_action('wp_head', array($this, 'optimize_css_loading'), 5);
+        }
+        
+        if (isset($options['keep_social_meta']) && $options['keep_social_meta']) {
+            // Priority 1 to ensure social meta tags are added early, but after plugins like Yoast/Rank Math
+            // Use template_redirect to ensure we're in the right context
+            add_action('wp_head', array($this, 'add_social_meta_tags'), 1);
+        }
+        
+        if (isset($options['keep_seo_meta']) && $options['keep_seo_meta']) {
+            // Priority 1 to ensure SEO meta tags are added early
+            add_action('wp_head', array($this, 'add_seo_meta_tags'), 1);
         }
         
         // Protocol Settings
@@ -808,6 +833,208 @@ class SNN_Security_Optimization {
             }
         } else {
             wp_enqueue_style('dashicons');
+        }
+    }
+    
+    /**
+     * Add social meta tags (Open Graph and Twitter Cards)
+     * Only adds if not already added by SEO plugins (Yoast, Rank Math, etc.)
+     */
+    public function add_social_meta_tags() {
+        // Check if SEO plugins are active and already adding meta tags
+        // Yoast SEO
+        if (defined('WPSEO_VERSION')) {
+            return; // Yoast handles this
+        }
+        
+        // Rank Math
+        if (defined('RANK_MATH_VERSION')) {
+            return; // Rank Math handles this
+        }
+        
+        // All in One SEO
+        if (defined('AIOSEO_VERSION')) {
+            return; // AIOSEO handles this
+        }
+        
+        // Only add if we're on a singular post/page, front page, or home
+        // Note: is_home() returns true for the blog posts page, is_front_page() for the front page
+        if (!is_singular() && !is_front_page() && !is_home()) {
+            return;
+        }
+        
+        global $post;
+        
+        // Get post/page data
+        if (is_singular() && $post) {
+            $title = get_the_title($post->ID);
+            $description = '';
+            $image = '';
+            $url = get_permalink($post->ID);
+            
+            // Get description (excerpt or first paragraph)
+            if (has_excerpt($post->ID)) {
+                $description = get_the_excerpt($post->ID);
+            } else {
+                $description = wp_trim_words(strip_shortcodes($post->post_content), 30, '...');
+            }
+            
+            // Get featured image or first image from content
+            if (has_post_thumbnail($post->ID)) {
+                $image_id = get_post_thumbnail_id($post->ID);
+                $image = $this->get_social_image_url($image_id);
+            } else {
+                // Try to get first image from content
+                $content = $post->post_content;
+                if (preg_match('/<img[^>]+src=["\']([^"\']+)["\']/', $content, $matches)) {
+                    $image = esc_url($matches[1]);
+                    // Convert to absolute URL if relative
+                    if (strpos($image, 'http') !== 0) {
+                        $image = home_url($image);
+                    }
+                }
+            }
+            
+            // Fallback to site logo or default image
+            if (empty($image)) {
+                $custom_logo_id = get_theme_mod('custom_logo');
+                if ($custom_logo_id) {
+                    $image = $this->get_social_image_url($custom_logo_id);
+                }
+            }
+            
+            // Ensure image is absolute URL with HTTPS
+            if (!empty($image) && strpos($image, 'http') !== 0) {
+                $image = home_url($image);
+            }
+            if (!empty($image)) {
+                $image = set_url_scheme($image, 'https');
+            }
+            
+            // Site name
+            $site_name = get_bloginfo('name');
+            
+            // Output Open Graph meta tags
+            echo "\n<!-- SNN Social Meta Tags -->\n";
+            echo '<meta property="og:type" content="article" />' . "\n";
+            echo '<meta property="og:title" content="' . esc_attr($title) . '" />' . "\n";
+            if (!empty($description)) {
+                echo '<meta property="og:description" content="' . esc_attr($description) . '" />' . "\n";
+            }
+            if (!empty($image)) {
+                echo '<meta property="og:image" content="' . esc_url($image) . '" />' . "\n";
+                // WhatsApp requires specific image dimensions (1200x630px recommended)
+                echo '<meta property="og:image:width" content="1200" />' . "\n";
+                echo '<meta property="og:image:height" content="630" />' . "\n";
+            }
+            echo '<meta property="og:url" content="' . esc_url($url) . '" />' . "\n";
+            echo '<meta property="og:site_name" content="' . esc_attr($site_name) . '" />' . "\n";
+            echo '<meta property="og:locale" content="' . esc_attr(get_locale()) . '" />' . "\n";
+            
+            // Output Twitter Card meta tags
+            echo '<meta name="twitter:card" content="summary_large_image" />' . "\n";
+            echo '<meta name="twitter:title" content="' . esc_attr($title) . '" />' . "\n";
+            if (!empty($description)) {
+                echo '<meta name="twitter:description" content="' . esc_attr($description) . '" />' . "\n";
+            }
+            if (!empty($image)) {
+                echo '<meta name="twitter:image" content="' . esc_url($image) . '" />' . "\n";
+            }
+            echo "<!-- /SNN Social Meta Tags -->\n\n";
+        } elseif (is_front_page() || is_home()) {
+            // Homepage meta tags
+            $title = get_bloginfo('name');
+            $description = get_bloginfo('description');
+            $url = home_url('/');
+            
+            // Get site logo
+            $image = '';
+            $custom_logo_id = get_theme_mod('custom_logo');
+            if ($custom_logo_id) {
+                $image = $this->get_social_image_url($custom_logo_id);
+            }
+            
+            if (!empty($image)) {
+                $image = set_url_scheme($image, 'https');
+            }
+            
+            echo "\n<!-- SNN Social Meta Tags -->\n";
+            echo '<meta property="og:type" content="website" />' . "\n";
+            echo '<meta property="og:title" content="' . esc_attr($title) . '" />' . "\n";
+            if (!empty($description)) {
+                echo '<meta property="og:description" content="' . esc_attr($description) . '" />' . "\n";
+            }
+            if (!empty($image)) {
+                echo '<meta property="og:image" content="' . esc_url($image) . '" />' . "\n";
+                echo '<meta property="og:image:width" content="1200" />' . "\n";
+                echo '<meta property="og:image:height" content="630" />' . "\n";
+            }
+            echo '<meta property="og:url" content="' . esc_url($url) . '" />' . "\n";
+            echo '<meta property="og:site_name" content="' . esc_attr($title) . '" />' . "\n";
+            echo '<meta property="og:locale" content="' . esc_attr(get_locale()) . '" />' . "\n";
+            
+            echo '<meta name="twitter:card" content="summary_large_image" />' . "\n";
+            echo '<meta name="twitter:title" content="' . esc_attr($title) . '" />' . "\n";
+            if (!empty($description)) {
+                echo '<meta name="twitter:description" content="' . esc_attr($description) . '" />' . "\n";
+            }
+            if (!empty($image)) {
+                echo '<meta name="twitter:image" content="' . esc_url($image) . '" />' . "\n";
+            }
+            echo "<!-- /SNN Social Meta Tags -->\n\n";
+        }
+    }
+    
+    /**
+     * Get optimized social image URL
+     * Returns image URL optimized for social sharing (1200x630px recommended)
+     */
+    private function get_social_image_url($attachment_id) {
+        if (!$attachment_id) {
+            return '';
+        }
+        
+        // Try to get a large image (1200px width recommended for Open Graph)
+        $image_url = wp_get_attachment_image_url($attachment_id, 'large');
+        
+        // If large size doesn't exist, try full size
+        if (!$image_url) {
+            $image_url = wp_get_attachment_image_url($attachment_id, 'full');
+        }
+        
+        // Convert to absolute URL with HTTPS
+        if ($image_url) {
+            $image_url = set_url_scheme($image_url, 'https');
+        }
+        
+        return $image_url;
+    }
+    
+    /**
+     * Add SEO meta tags (canonical and robots)
+     * Only adds if not already added by SEO plugins
+     */
+    public function add_seo_meta_tags() {
+        // Check if SEO plugins are active
+        if (defined('WPSEO_VERSION') || defined('RANK_MATH_VERSION') || defined('AIOSEO_VERSION')) {
+            return; // SEO plugins handle this
+        }
+        
+        // Only add canonical on singular posts/pages
+        if (is_singular()) {
+            global $post;
+            if ($post) {
+                $canonical_url = get_permalink($post->ID);
+                echo '<link rel="canonical" href="' . esc_url($canonical_url) . '" />' . "\n";
+            }
+        } elseif (is_front_page() || is_home()) {
+            $canonical_url = home_url('/');
+            echo '<link rel="canonical" href="' . esc_url($canonical_url) . '" />' . "\n";
+        }
+        
+        // Add robots meta tag if needed (noindex for search, archives, etc.)
+        if (is_search() || is_404() || is_date() || is_author()) {
+            echo '<meta name="robots" content="noindex, follow" />' . "\n";
         }
     }
 }

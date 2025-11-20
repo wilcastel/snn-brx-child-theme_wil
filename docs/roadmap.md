@@ -27,22 +27,21 @@ Optimizar el tema hijo de Bricks Builder para mejorar Core Web Vitals, seguridad
 - [x] Remove WP JSON Links ✅ (implementado en head-optimization.php)
 - [x] Remove OEmbed Links ✅ (implementado en head-optimization.php)
 - [x] Remove DNS Prefetch ✅ (implementado en head-optimization.php)
-- [ ] Remove Emoji Scripts (configurable en Security & Optimization)
-- [ ] Remove WP Block Library (configurable en Security & Optimization)
+- [x] Remove Emoji Scripts ✅ (configurable en Security & Optimization - Disable Emojis)
+- [x] Remove WP Block Library ✅ (configurable en Security & Optimization)
 
 #### Optimización de Carga
-- [ ] Optimize CSS Loading con font preloading
-- [ ] Preload Critical Fonts
-- [ ] Keep Essential Meta (charset, viewport)
-- [ ] Keep Social Meta (Open Graph, Twitter Card)
-- [ ] Keep SEO Meta (canonical, robots)
+- [x] Optimize CSS Loading ✅ (implementado con preload para Bricks, theme-specific y WindPress)
+- [x] Preload Critical Fonts ✅ (movido a Assets Optimization)
+- [x] Keep Social Meta ✅ (implementado - genera Open Graph y Twitter Cards para compartir en redes sociales) ⚠️ Pendiente pruebas en producción
+- [x] Keep SEO Meta ✅ (implementado - genera canonical y robots meta tags) ⚠️ Pendiente pruebas en producción
 
 #### Configuraciones de Protocolo
-- [ ] Force HTTPS (con precaución)
-- [ ] Fix Mixed Content automáticamente
-- [ ] Add CORS Headers para recursos same-domain
-- [ ] Protocol Detection en JavaScript
-- [ ] Fix Font URLs para prevenir errores CORS
+- [x] Force HTTPS ✅ (implementado, requiere HTTPS configurado)
+- [x] Fix Mixed Content automáticamente ✅ (implementado con Content-Security-Policy)
+- [x] Add CORS Headers ✅ (implementado con excepción para REST API)
+- [x] Protocol Detection en JavaScript ✅ (implementado)
+- [x] Fix Font URLs ✅ (implementado con font-display: swap)
 
 ### 1.2 Gestión Inteligente de Dashicons
 **Objetivo**: Cargar Dashicons solo cuando sea necesario (usuarios logueados con permisos de editor+).
