@@ -352,27 +352,225 @@ Verificar que todas las configuraciones básicas de seguridad funcionan correcta
 ---
 
 ### 12. Preload Critical Fonts
-**Configuración**: `SNN Settings > Security & Optimization > Loading Optimization > Preload Critical Fonts`
+**Configuración**: ~~`SNN Settings > Security & Optimization > Loading Optimization > Preload Critical Fonts`~~
 
-#### Notas
-- ⚠️ Esta opción está comentada/deprecada
-- La funcionalidad se movió a `assets-optimization.php` para evitar duplicados
+#### Estado
+- ❌ **ELIMINADA**: Esta opción fue eliminada de Security & Optimization
+- ✅ La funcionalidad está disponible en `SNN Settings > Assets Optimization > Font Optimization > Enable Font Preloading`
 - El preload de fuentes se maneja desde la configuración de Assets Optimization
 
 ---
 
 ### 13-15. Keep Meta Tags (Essential, Social, SEO)
-**Configuración**: `SNN Settings > Security & Optimization > Loading Optimization > Keep Essential/Social/SEO Meta`
+**Configuración**: ~~`SNN Settings > Security & Optimization > Loading Optimization > Keep Essential/Social/SEO Meta`~~
+
+#### Estado
+- ❌ **ELIMINADAS**: Estas opciones fueron eliminadas de Security & Optimization
+- ⚠️ No estaban implementadas y no se utilizaban
+- Si se necesita esta funcionalidad en el futuro, se puede implementar en `head-optimization.php`
+
+---
+
+## Protocol Settings
+
+### 16. Fix Mixed Content
+**Configuración**: `SNN Settings > Security & Optimization > Protocol Settings > Fix Mixed Content`
+
+#### Pasos
+1. Activar la opción
+2. Guardar cambios
+3. Verificar el código fuente HTML
+4. Buscar scripts que corrijan URLs de contenido mixto (HTTP en HTTPS)
+
+#### Resultado Esperado
+- ✅ Se agrega script para corregir URLs de contenido mixto
+- ✅ Las URLs HTTP se convierten automáticamente a HTTPS
+- ✅ Mejora la seguridad al evitar contenido mixto
+
+#### Evidencia
+- [x] ✅ El meta tag `<meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">` aparece en el HTML
+- [x] ✅ El meta tag se encuentra en el `<head>` del documento
+- [x] ✅ Configuración guardada correctamente (verificado en admin)
 
 #### Notas
-- ⚠️ Estas opciones están definidas pero **NO están implementadas**
-- Son opciones para mantener meta tags específicos cuando se hace limpieza del head
-- Requieren implementación si se desea usar
+- La función `fix_mixed_content()` agrega un meta tag `Content-Security-Policy` con `upgrade-insecure-requests` en el `<head>`
+- Este meta tag le indica al navegador que actualice automáticamente todas las peticiones HTTP a HTTPS
+- Esto es útil cuando hay recursos (imágenes, scripts, estilos) cargados vía HTTP en un sitio HTTPS
+- El navegador automáticamente convierte las URLs HTTP a HTTPS antes de hacer las peticiones
+- Esto mejora la seguridad al evitar contenido mixto (mixed content) sin necesidad de modificar manualmente todas las URLs
+
+---
+
+### 17. Add CORS Headers
+**Configuración**: `SNN Settings > Security & Optimization > Protocol Settings > Add CORS Headers`
+
+#### Pasos
+1. Activar la opción
+2. Guardar cambios
+3. Verificar headers HTTP (usar herramientas de desarrollador o curl)
+4. Buscar headers `Access-Control-Allow-Origin`
+
+#### Resultado Esperado
+- ✅ Se agregan headers CORS apropiados
+- ✅ Los recursos del mismo dominio pueden acceder correctamente
+- ✅ Mejora la compatibilidad con recursos locales
+
+#### Evidencia
+- [x] ✅ Los headers CORS se agregan correctamente para peticiones no-API:
+  - `Access-Control-Allow-Origin: http://lanacionweb.test`
+  - `Access-Control-Allow-Methods: GET, POST, OPTIONS`
+  - `Access-Control-Allow-Headers: Content-Type`
+- [x] ✅ Los endpoints REST API (`/wp-json/`) NO reciben headers CORS adicionales (evita conflictos)
+- [x] ✅ Los endpoints de WindPress (`/wp-json/windpress/`) mantienen sus headers nativos de WordPress REST API
+- [x] ✅ Configuración guardada correctamente (verificado en admin)
+
+#### Notas
+- La función `add_cors_headers()` agrega headers CORS en `send_headers` SOLO para recursos no-API
+- **Importante**: Excluye endpoints REST API (`/wp-json/`) para evitar conflictos con WordPress REST API y plugins como WindPress
+- WordPress REST API ya maneja sus propios headers CORS, por lo que no los sobrescribimos
+- Esto permite que recursos del mismo dominio (no-API) se carguen sin problemas de CORS
+- Los plugins que usan REST API (como WindPress) siguen funcionando normalmente con sus headers nativos
+
+---
+
+### 18. Protocol Detection
+**Configuración**: `SNN Settings > Security & Optimization > Protocol Settings > Protocol Detection`
+
+#### Pasos
+1. Activar la opción
+2. Guardar cambios
+3. Verificar el código fuente HTML (buscar script de detección de protocolo)
+4. Verificar que el script se carga en el footer
+
+#### Resultado Esperado
+- ✅ Se agrega script de detección de protocolo en el footer
+- ✅ El script detecta automáticamente HTTP/HTTPS
+- ✅ Mejora la compatibilidad con recursos que requieren detección de protocolo
+
+#### Evidencia
+- [x] ✅ El script de detección de protocolo aparece en el footer del HTML
+- [x] ✅ El script verifica `location.protocol !== 'https:'` y `location.hostname !== 'localhost'`
+- [x] ✅ Si el protocolo no es HTTPS y no es localhost, redirige automáticamente a HTTPS
+- [x] ✅ Configuración guardada correctamente (verificado en admin)
+
+#### Notas
+- La función `protocol_detection_script()` agrega un script en `wp_footer`
+- El script detecta si el protocolo no es HTTPS y redirige automáticamente (excepto en localhost)
+- Útil para forzar HTTPS en producción sin necesidad de configuración del servidor
+- **Nota**: Este script se ejecuta en el cliente (JavaScript), por lo que hay un pequeño delay antes de la redirección
+- **Diferencia con Force HTTPS**: "Force HTTPS" redirige en el servidor (más rápido), "Protocol Detection" redirige en el cliente (JavaScript)
+- En localhost, el script no redirige para permitir desarrollo local sin HTTPS
+
+---
+
+### 19. Fix Font URLs
+**Configuración**: `SNN Settings > Security & Optimization > Protocol Settings > Fix Font URLs`
+
+#### Pasos
+1. Activar la opción
+2. Guardar cambios
+3. Verificar que las URLs de fuentes se corrigen correctamente
+4. Verificar que no hay errores CORS relacionados con fuentes
+
+#### Resultado Esperado
+- ✅ Las URLs de fuentes se corrigen automáticamente
+- ✅ No hay errores CORS relacionados con fuentes
+- ✅ Las fuentes se cargan correctamente
+
+#### Evidencia
+- [x] ✅ El estilo `<style>@font-face { font-display: swap; }</style>` aparece en el HTML
+- [x] ✅ El estilo se encuentra en el `<head>` del documento
+- [x] ✅ Las fuentes individuales ya tienen `font-display: swap` en sus declaraciones
+- [x] ✅ Configuración guardada correctamente (verificado en admin)
+
+#### Notas
+- La función `fix_font_urls()` agrega un estilo global `@font-face { font-display: swap; }` en el `<head>`
+- Esto actúa como respaldo para asegurar que todas las fuentes usen `font-display: swap`
+- `font-display: swap` mejora el rendimiento al mostrar texto con fuente del sistema mientras se carga la fuente personalizada
+- Esto previene el "flash de texto invisible" (FOIT) y mejora el LCP (Largest Contentful Paint)
+- Las fuentes individuales ya tienen `font-display: swap` en sus declaraciones `@font-face`, pero este estilo global actúa como respaldo
+- **Nota**: Aunque el nombre sugiere "Fix Font URLs", la función actualmente agrega `font-display: swap` en lugar de corregir URLs. Esto es útil para prevenir problemas de CORS relacionados con la carga de fuentes
+
+---
+
+### 20. Force HTTPS
+**Configuración**: `SNN Settings > Security & Optimization > Protocol Settings > Force HTTPS`
+
+#### Pasos
+1. ⚠️ **ADVERTENCIA**: Esta opción fuerza redirección a HTTPS
+2. ⚠️ **NO PROBAR EN LOCAL**: El entorno local no tiene HTTPS configurado
+3. Verificar el código de la función `force_https()`
+4. Documentar que requiere configuración HTTPS en producción
+
+#### Resultado Esperado
+- ✅ La función `force_https()` está implementada correctamente
+- ✅ Redirige todas las peticiones HTTP a HTTPS con código 301
+- ⚠️ Solo debe activarse si el sitio está completamente configurado para HTTPS
+
+#### Evidencia
+- [x] ✅ La función `force_https()` está implementada en `security-optimization.php`
+- [x] ✅ La función verifica `is_ssl()` antes de redirigir
+- [x] ✅ Usa `wp_redirect()` con código 301 (redirección permanente)
+- [x] ⚠️ **NO PROBADO EN LOCAL**: El entorno local no tiene HTTPS configurado
+- [x] ⚠️ **NO ACTIVADO**: No se activó para evitar bucles de redirección en local
+
+#### Notas
+- ⚠️ **IMPORTANTE**: Esta opción debe usarse con precaución
+- Solo debe activarse si el sitio está completamente configurado para HTTPS
+- La función `force_https()` redirige todas las peticiones HTTP a HTTPS usando `template_redirect`
+- Si el sitio no está configurado para HTTPS, puede causar bucles de redirección
+- **Código de la función**:
+  ```php
+  public function force_https() {
+      if (!is_ssl()) {
+          wp_redirect('https://' . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'], 301);
+          exit();
+      }
+  }
+  ```
+- **Diferencia con Protocol Detection**: 
+  - "Force HTTPS" redirige en el servidor (más rápido, antes de cargar la página)
+  - "Protocol Detection" redirige en el cliente (JavaScript, después de cargar la página)
+- **Recomendación**: Usar "Force HTTPS" en producción con configuración adecuada del servidor
+
+---
+
+## Resource Management
+
+### 21. Conditional Dashicons
+**Configuración**: `SNN Settings > Security & Optimization > Resource Management > Conditional Dashicons`
+
+#### Pasos
+1. Verificar estado actual (sin sesión iniciada)
+2. Verificar que dashicons NO se carga para usuarios no logueados
+3. Iniciar sesión como usuario con permisos de editor+
+4. Verificar que dashicons SÍ se carga para usuarios logueados con permisos de editor+
+
+#### Resultado Esperado
+- ✅ Dashicons NO se carga para usuarios no logueados
+- ✅ Dashicons SÍ se carga para usuarios logueados con permisos de editor+
+- ✅ Ahorro de recursos para usuarios no logueados
+
+#### Evidencia
+- [x] ✅ Dashicons NO aparece en el HTML para usuarios no logueados (verificado con curl)
+- [x] ✅ La función `conditional_dashicons()` está siempre activa (no requiere opción)
+- [x] ✅ Configuración guardada correctamente (verificado en admin)
+
+#### Notas
+- **IMPORTANTE**: La función `conditional_dashicons()` está **siempre activa** y no depende de la opción configurable
+- La opción `conditional_dashicons` está definida en la interfaz pero actualmente no se está usando
+- La función se ejecuta en `apply_head_optimizations()` y remueve dashicons para usuarios no logueados o sin permisos de editor
+- Esto ahorra ~15KB por usuario no logueado
+- Dashicons solo es necesario en el admin, no en el frontend para usuarios normales
+- **Nota**: Esta funcionalidad también está implementada en `head-optimization.php` y se ejecuta siempre
+- La función `conditional_dashicons_new()` está definida pero no se está usando actualmente
 
 ---
 
 ## Próximos Pasos
-- [ ] Revisar configuraciones avanzadas (Advanced Head Cleanup) ✅
-- [ ] Probar configuraciones de optimización de carga (en progreso)
+- [x] Revisar configuraciones avanzadas (Advanced Head Cleanup) ✅
+- [x] Probar configuraciones de optimización de carga (Optimize CSS Loading) ✅
+- [ ] Probar configuraciones de Protocol Settings
+- [ ] Probar configuraciones de Resource Management
 - [ ] Verificar compatibilidad con plugins comunes
 

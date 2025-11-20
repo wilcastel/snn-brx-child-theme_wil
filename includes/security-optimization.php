@@ -227,34 +227,6 @@ class SNN_Security_Optimization {
                 'section' => 'loading_optimization',
                 'description' => __('Optimize CSS loading with font preloading.', 'snn')
             ),
-            array(
-                'id' => 'preload_critical_fonts',
-                'label' => __('Preload Critical Fonts', 'snn'),
-                'type' => 'checkbox',
-                'section' => 'loading_optimization',
-                'description' => __('Preload critical fonts for better performance.', 'snn')
-            ),
-            array(
-                'id' => 'keep_essential_meta',
-                'label' => __('Keep Essential Meta', 'snn'),
-                'type' => 'checkbox',
-                'section' => 'loading_optimization',
-                'description' => __('Keep essential meta tags (charset, viewport).', 'snn')
-            ),
-            array(
-                'id' => 'keep_social_meta',
-                'label' => __('Keep Social Meta', 'snn'),
-                'type' => 'checkbox',
-                'section' => 'loading_optimization',
-                'description' => __('Keep social media meta tags (Open Graph, Twitter Card).', 'snn')
-            ),
-            array(
-                'id' => 'keep_seo_meta',
-                'label' => __('Keep SEO Meta', 'snn'),
-                'type' => 'checkbox',
-                'section' => 'loading_optimization',
-                'description' => __('Keep SEO meta tags (canonical, robots).', 'snn')
-            ),
             
             // Protocol Settings
             array(
@@ -473,11 +445,6 @@ class SNN_Security_Optimization {
             // Use priority 5 to ensure styles are registered before we detect them
             add_action('wp_head', array($this, 'optimize_css_loading'), 5);
         }
-        
-        // Preload de fuentes movido a assets-optimization.php para evitar duplicados
-        // if (isset($options['preload_critical_fonts']) && $options['preload_critical_fonts']) {
-        //     add_action('wp_head', array($this, 'preload_critical_fonts'), 1);
-        // }
         
         // Protocol Settings
         if (isset($options['force_https']) && $options['force_https']) {
@@ -771,12 +738,6 @@ class SNN_Security_Optimization {
      * DEPRECATED: Esta funcionalidad ha sido movida a assets-optimization.php para evitar duplicados
      * Mantenida solo para compatibilidad con código legacy
      */
-    public function preload_critical_fonts() {
-        // Esta función ya no se usa - el preload de fuentes se maneja en assets-optimization.php
-        // Si necesitas agregar esta fuente específica, hazlo desde la configuración de assets-optimization
-        return;
-    }
-    
     /**
      * Force HTTPS
      */
@@ -796,8 +757,20 @@ class SNN_Security_Optimization {
     
     /**
      * Add CORS headers
+     * Note: WordPress REST API already handles CORS headers, so we exclude API endpoints
+     * to avoid conflicts with plugins like WindPress
      */
     public function add_cors_headers() {
+        // Don't add CORS headers for REST API endpoints
+        // WordPress REST API and plugins (like WindPress) handle their own CORS headers
+        $request_uri = isset($_SERVER['REQUEST_URI']) ? $_SERVER['REQUEST_URI'] : '';
+        
+        // Exclude REST API endpoints (wp-json)
+        if (!empty($request_uri) && strpos($request_uri, '/wp-json/') !== false) {
+            return; // Let WordPress REST API handle CORS for API endpoints
+        }
+        
+        // Only add CORS headers for non-API requests (same-domain resources)
         header('Access-Control-Allow-Origin: ' . home_url());
         header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
         header('Access-Control-Allow-Headers: Content-Type');
