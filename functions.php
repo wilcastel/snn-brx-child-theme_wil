@@ -204,15 +204,37 @@ function bl_setup_query_controls( $control_options ) {
 }
 
 /* Cache estático para almacenar los WP_Query completos */
-function bl_get_cached_queries() {
-    static $cached_queries = [];
-    return $cached_queries;
+// Usar una variable global para poder acceder desde fuera de las funciones
+function bl_get_cached_queries_storage() {
+    static $storage = null;
+    if ( $storage === null ) {
+        $storage = [
+            'queries' => [],
+            'posts' => [],
+        ];
+    }
+    return $storage;
 }
 
-function bl_set_cached_query( $cache_id, $wp_query ) {
-    static $cached_queries = [];
-    $cached_queries[$cache_id] = $wp_query;
-    return $cached_queries;
+/* Función para limpiar el caché de una consulta específica */
+function bl_clear_cached_query( $cache_id = null ) {
+    $storage = bl_get_cached_queries_storage();
+    
+    if ( $cache_id === null ) {
+        // Limpiar todos los cachés
+        $storage['queries'] = [];
+        $storage['posts'] = [];
+    } else {
+        // Limpiar solo un caché específico
+        unset( $storage['queries'][$cache_id] );
+        unset( $storage['posts'][$cache_id] );
+    }
+}
+
+/* Función para obtener todos los cache IDs activos */
+function bl_get_cached_query_ids() {
+    $storage = bl_get_cached_queries_storage();
+    return array_keys( $storage['posts'] );
 }
 
 /* Run new query if option selected - Prioridad alta para ejecutarse antes que otros filtros */
@@ -291,7 +313,8 @@ function bl_maybe_run_cached_query( $results, $query_obj ) {
         }
     }
     
-    // Obtener los argumentos de la consulta base (SIN offset ni posts_per_page)
+    // Obtener los argumentos de la consulta base
+    // IMPORTANTE: Separar los argumentos de la query base de los parámetros del loop
     $query_args = [];
     if ( isset( $settings['cached_wp_query_args'] ) && !empty( $settings['cached_wp_query_args'] ) ) {
         // Hacer una copia de los argumentos para no modificar el original
@@ -299,45 +322,193 @@ function bl_maybe_run_cached_query( $results, $query_obj ) {
             ? $settings['cached_wp_query_args'] 
             : [];
         
-        // IMPORTANTE: Remover posts_per_page y offset de la query base
-        // porque queremos traer TODOS los posts y luego aplicar filtros por loop
-        // Estos valores ya los leímos arriba para usar en el loop
-        unset( $query_args['posts_per_page'] );
+        // DEBUGGING: Ver qué argumentos están llegando
+        if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+            error_log( 'Cached Query - Query Args recibidos: ' . print_r( $query_args, true ) );
+        }
+        
+        // Convertir formatos de Bricks a formatos de WP_Query si es necesario
+        // Bricks puede usar 'category' en lugar de 'category__in'
+        if ( isset( $query_args['category'] ) && !isset( $query_args['category__in'] ) ) {
+            $category_value = $query_args['category'];
+            
+            // Si es un número o array de números, usar category__in
+            if ( is_numeric( $category_value ) ) {
+                $query_args['category__in'] = [ intval( $category_value ) ];
+            } elseif ( is_array( $category_value ) ) {
+                // Si es array, convertir todos a int
+                $query_args['category__in'] = array_map( 'intval', array_filter( $category_value, 'is_numeric' ) );
+            } elseif ( is_string( $category_value ) ) {
+                // Si es string, puede ser un slug o ID
+                $term = get_term_by( 'slug', $category_value, 'category' );
+                if ( $term ) {
+                    $query_args['category__in'] = [ $term->term_id ];
+                } elseif ( is_numeric( $category_value ) ) {
+                    $query_args['category__in'] = [ intval( $category_value ) ];
+                }
+            }
+            unset( $query_args['category'] );
+        }
+        
+        // Bricks puede usar 'tag' en lugar de 'tag__in'
+        if ( isset( $query_args['tag'] ) && !isset( $query_args['tag__in'] ) ) {
+            $tag_value = $query_args['tag'];
+            
+            // Si es un número o array de números, usar tag__in
+            if ( is_numeric( $tag_value ) ) {
+                $query_args['tag__in'] = [ intval( $tag_value ) ];
+            } elseif ( is_array( $tag_value ) ) {
+                // Si es array, convertir todos a int
+                $query_args['tag__in'] = array_map( 'intval', array_filter( $tag_value, 'is_numeric' ) );
+            } elseif ( is_string( $tag_value ) ) {
+                // Si es string, puede ser un slug o ID
+                $term = get_term_by( 'slug', $tag_value, 'post_tag' );
+                if ( $term ) {
+                    $query_args['tag__in'] = [ $term->term_id ];
+                } elseif ( is_numeric( $tag_value ) ) {
+                    $query_args['tag__in'] = [ intval( $tag_value ) ];
+                }
+            }
+            unset( $query_args['tag'] );
+        }
+        
+        // Manejar category__in y tag__in si vienen como strings o arrays mixtos
+        if ( isset( $query_args['category__in'] ) ) {
+            $cats = $query_args['category__in'];
+            if ( is_string( $cats ) ) {
+                // Si es string, intentar convertir a array
+                $cats = explode( ',', $cats );
+            }
+            if ( is_array( $cats ) ) {
+                $query_args['category__in'] = array_map( 'intval', array_filter( $cats, 'is_numeric' ) );
+            }
+        }
+        
+        if ( isset( $query_args['tag__in'] ) ) {
+            $tags = $query_args['tag__in'];
+            if ( is_string( $tags ) ) {
+                // Si es string, intentar convertir a array
+                $tags = explode( ',', $tags );
+            }
+            if ( is_array( $tags ) ) {
+                $query_args['tag__in'] = array_map( 'intval', array_filter( $tags, 'is_numeric' ) );
+            }
+        }
+        
+        // Procesar tax_query - Bricks usa formato especial: "taxonomy::term_id"
+        if ( isset( $query_args['tax_query'] ) ) {
+            $tax_query = $query_args['tax_query'];
+            
+            // Si es string, intentar parsear
+            if ( is_string( $tax_query ) ) {
+                $tax_query_parsed = maybe_unserialize( $tax_query );
+                if ( is_array( $tax_query_parsed ) ) {
+                    $tax_query = $tax_query_parsed;
+                } else {
+                    $tax_query_json = json_decode( $tax_query, true );
+                    if ( is_array( $tax_query_json ) ) {
+                        $tax_query = $tax_query_json;
+                    }
+                }
+            }
+            
+            // Si es array, procesar cada elemento
+            if ( is_array( $tax_query ) ) {
+                $processed_tax_query = [];
+                $taxonomy_groups = []; // Agrupar términos por taxonomía
+                
+                foreach ( $tax_query as $index => $tax_item ) {
+                    $taxonomy = null;
+                    $term_id = null;
+                    
+                    // Si el elemento es un string en formato "taxonomy::term_id" (formato de Bricks)
+                    if ( is_string( $tax_item ) && strpos( $tax_item, '::' ) !== false ) {
+                        list( $taxonomy, $term_id ) = explode( '::', $tax_item, 2 );
+                    }
+                    // Si el elemento ya es un array (formato estándar de WP_Query)
+                    elseif ( is_array( $tax_item ) ) {
+                        // Verificar si tiene la estructura correcta de WP_Query
+                        if ( isset( $tax_item['taxonomy'] ) && isset( $tax_item['terms'] ) ) {
+                            // Ya está en formato correcto, agregarlo directamente
+                            $processed_tax_query[] = $tax_item;
+                            continue;
+                        }
+                        // Si es un array anidado incorrecto (como [0] => ['post_tag::7'])
+                        elseif ( isset( $tax_item[0] ) && is_string( $tax_item[0] ) && strpos( $tax_item[0], '::' ) !== false ) {
+                            list( $taxonomy, $term_id ) = explode( '::', $tax_item[0], 2 );
+                        }
+                    }
+                    
+                    // Si tenemos taxonomía y término, agregarlo al grupo
+                    if ( $taxonomy && $term_id ) {
+                        if ( !isset( $taxonomy_groups[$taxonomy] ) ) {
+                            $taxonomy_groups[$taxonomy] = [];
+                        }
+                        $taxonomy_groups[$taxonomy][] = intval( $term_id );
+                    }
+                }
+                
+                // Convertir los grupos en formato WP_Query
+                foreach ( $taxonomy_groups as $taxonomy => $term_ids ) {
+                    $processed_tax_query[] = [
+                        'taxonomy' => $taxonomy,
+                        'field' => 'term_id',
+                        'terms' => array_unique( $term_ids ), // Eliminar duplicados
+                    ];
+                }
+                
+                // Si procesamos algo, reemplazar el tax_query original
+                if ( !empty( $processed_tax_query ) ) {
+                    $query_args['tax_query'] = $processed_tax_query;
+                }
+            }
+        }
+        
+        // Remover offset y paged de la query base (estos son solo para loops individuales)
+        // PERO mantener posts_per_page si se especifica en la query base
+        // Si posts_per_page NO está en la query base, usar -1 (todos los posts)
         unset( $query_args['offset'] );
         unset( $query_args['paged'] );
         
-        // Asegurar que traemos TODOS los posts (sin límite)
-        $query_args['posts_per_page'] = -1; // -1 = todos los posts disponibles
+        // Si posts_per_page no está especificado en la query base, usar -1 (todos los posts)
+        if ( !isset( $query_args['posts_per_page'] ) || empty( $query_args['posts_per_page'] ) ) {
+            $query_args['posts_per_page'] = -1; // -1 = todos los posts disponibles
+        }
+        
         $query_args['no_found_rows'] = false; // Necesario para que funcione correctamente
+        
+        // DEBUGGING: Ver los argumentos procesados
+        if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+            error_log( 'Cached Query - Query Args procesados: ' . print_r( $query_args, true ) );
+        }
     } else {
         // Valores por defecto si no se especifica
         $query_args = [
             'post_type' => 'post',
-            'posts_per_page' => -1, // Traer todos los posts
+            'posts_per_page' => -1, // Traer todos los posts por defecto
             'orderby' => 'date',
             'order' => 'DESC',
             'no_found_rows' => false,
         ];
     }
     
-    // Obtener el caché estático (global para toda la petición)
-    static $cached_queries = [];
-    static $cached_posts = []; // Cachear también los posts directamente para acceso más rápido
+    // Obtener el almacenamiento de caché
+    $storage = bl_get_cached_queries_storage();
     
     // Si no existe el WP_Query en caché, crearlo y guardarlo
-    if ( !isset( $cached_queries[$cache_id] ) ) {
-        // Crear el WP_Query completo con todos los posts (sin límite)
+    if ( !isset( $storage['posts'][$cache_id] ) ) {
+        // Crear el WP_Query completo con los argumentos especificados
         $wp_query = new WP_Query( $query_args );
         
         // Guardar el WP_Query completo en caché
-        $cached_queries[$cache_id] = $wp_query;
+        $storage['queries'][$cache_id] = $wp_query;
         
         // Guardar también los posts directamente para acceso más rápido
-        $cached_posts[$cache_id] = $wp_query->posts;
+        $storage['posts'][$cache_id] = $wp_query->posts;
     }
     
     // Obtener todos los posts del caché (usar el array directo en lugar del WP_Query)
-    $all_posts = $cached_posts[$cache_id];
+    $all_posts = $storage['posts'][$cache_id];
     
     // Si no hay posts, devolver array vacío
     if ( empty( $all_posts ) ) {
@@ -389,6 +560,41 @@ function bl_setup_cached_post_data( $loop_object, $loop_key, $query_obj ) {
 }
 
 /****************** 
+ * Limpiar caché automáticamente cuando se publica/actualiza/elimina un post
+ ******************/
+
+/* Limpiar todos los cachés cuando se guarda un post (publicar o actualizar) */
+add_action( 'save_post', 'bl_clear_cached_queries_on_post_save', 10, 2 );
+function bl_clear_cached_queries_on_post_save( $post_id, $post ) {
+    // Evitar limpiar en autosaves y revisiones
+    if ( defined( 'DOING_AUTOSAVE' ) && DOING_AUTOSAVE ) {
+        return;
+    }
+    
+    if ( wp_is_post_revision( $post_id ) ) {
+        return;
+    }
+    
+    // Limpiar todos los cachés cuando se guarda cualquier post
+    bl_clear_cached_query();
+}
+
+/* Limpiar todos los cachés cuando se elimina un post */
+add_action( 'delete_post', 'bl_clear_cached_queries_on_post_delete', 10, 1 );
+function bl_clear_cached_queries_on_post_delete( $post_id ) {
+    bl_clear_cached_query();
+}
+
+/* Limpiar todos los cachés cuando cambia el estado de un post (publicado, borrador, etc.) */
+add_action( 'transition_post_status', 'bl_clear_cached_queries_on_status_change', 10, 3 );
+function bl_clear_cached_queries_on_status_change( $new_status, $old_status, $post ) {
+    // Solo limpiar si el post es de tipo 'post' o si cambia a/desde 'publish'
+    if ( $post->post_type === 'post' && ( $new_status === 'publish' || $old_status === 'publish' ) ) {
+        bl_clear_cached_query();
+    }
+}
+
+/****************** 
  * Extra Query Controls
  * Agrega controles en la UI de Bricks para configurar la consulta cacheada
  * @see reference https://itchycode.com/integrate-jetengine-query-builder-in-bricks-query-loop-non-official/
@@ -429,7 +635,7 @@ function bl_add_cached_query_controls( $controls ) {
                 [ 'hasLoop', '!=', false ] 
             ),
             'rerender' => true,
-            'description' => esc_html__( 'Argumentos de WP_Query para la consulta grande. NO incluyas posts_per_page aquí - se traerán todos los posts. Usa Offset y Posts per Page abajo para cada loop.', 'bricks' )
+            'description' => esc_html__( 'Argumentos de WP_Query para la consulta base. Puedes configurar: post_type, posts_per_page (opcional, por defecto trae todos), categorías, etiquetas, tax_query, meta_query, orderby, order, etc. Los loops individuales pueden usar Offset y Posts per Page para filtrar estos resultados.', 'bricks' )
         ],
         'cached_wp_query_offset' => [
             'tab' => 'content',
