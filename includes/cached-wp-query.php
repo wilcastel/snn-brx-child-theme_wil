@@ -33,28 +33,32 @@ function bl_setup_query_controls( $control_options ) {
 /* Cache estático para almacenar los WP_Query completos */
 // Usar una variable global para poder acceder desde fuera de las funciones
 function bl_get_cached_queries_storage() {
-    static $storage = null;
-    if ( $storage === null ) {
-        $storage = [
+    global $bl_cached_queries_storage;
+    if ( !isset( $bl_cached_queries_storage ) ) {
+        $bl_cached_queries_storage = [
             'queries' => [],
             'posts' => [],
         ];
     }
-    return $storage;
+    return $bl_cached_queries_storage;
 }
 
 /* Función para limpiar el caché de una consulta específica */
 function bl_clear_cached_query( $cache_id = null ) {
-    $storage = bl_get_cached_queries_storage();
+    global $bl_cached_queries_storage;
+    
+    if ( !isset( $bl_cached_queries_storage ) ) {
+        return; // No hay nada que limpiar
+    }
     
     if ( $cache_id === null ) {
         // Limpiar todos los cachés
-        $storage['queries'] = [];
-        $storage['posts'] = [];
+        $bl_cached_queries_storage['queries'] = [];
+        $bl_cached_queries_storage['posts'] = [];
     } else {
         // Limpiar solo un caché específico
-        unset( $storage['queries'][$cache_id] );
-        unset( $storage['posts'][$cache_id] );
+        unset( $bl_cached_queries_storage['queries'][$cache_id] );
+        unset( $bl_cached_queries_storage['posts'][$cache_id] );
     }
 }
 
@@ -62,6 +66,126 @@ function bl_clear_cached_query( $cache_id = null ) {
 function bl_get_cached_query_ids() {
     $storage = bl_get_cached_queries_storage();
     return array_keys( $storage['posts'] );
+}
+
+/* Función helper para filtrar posts por tax_query */
+function bl_filter_posts_by_tax_query( $posts, $tax_query ) {
+    if ( empty( $tax_query ) || empty( $posts ) ) {
+        return $posts;
+    }
+    
+    // Procesar tax_query - Bricks usa formato especial: "taxonomy::term_id"
+    $processed_tax_query = [];
+    
+    // Si es string, intentar parsear
+    if ( is_string( $tax_query ) ) {
+        $tax_query_parsed = maybe_unserialize( $tax_query );
+        if ( is_array( $tax_query_parsed ) ) {
+            $tax_query = $tax_query_parsed;
+        } else {
+            $tax_query_json = json_decode( $tax_query, true );
+            if ( is_array( $tax_query_json ) ) {
+                $tax_query = $tax_query_json;
+            }
+        }
+    }
+    
+    // Si es array, procesar cada elemento
+    if ( !is_array( $tax_query ) ) {
+        return $posts;
+    }
+    
+    $taxonomy_groups = []; // Agrupar términos por taxonomía
+    
+    foreach ( $tax_query as $index => $tax_item ) {
+        $taxonomy = null;
+        $term_id = null;
+        
+        // Si el elemento es un string en formato "taxonomy::term_id" (formato de Bricks)
+        if ( is_string( $tax_item ) && strpos( $tax_item, '::' ) !== false ) {
+            list( $taxonomy, $term_id ) = explode( '::', $tax_item, 2 );
+        }
+        // Si el elemento ya es un array (formato estándar de WP_Query)
+        elseif ( is_array( $tax_item ) ) {
+            // Verificar si tiene la estructura correcta de WP_Query
+            if ( isset( $tax_item['taxonomy'] ) && isset( $tax_item['terms'] ) ) {
+                // Ya está en formato correcto, agregarlo directamente
+                $processed_tax_query[] = $tax_item;
+                continue;
+            }
+            // Si es un array anidado incorrecto (como [0] => ['post_tag::7'])
+            elseif ( isset( $tax_item[0] ) && is_string( $tax_item[0] ) && strpos( $tax_item[0], '::' ) !== false ) {
+                list( $taxonomy, $term_id ) = explode( '::', $tax_item[0], 2 );
+            }
+        }
+        
+        // Si tenemos taxonomía y término, agregarlo al grupo
+        if ( $taxonomy && $term_id ) {
+            if ( !isset( $taxonomy_groups[$taxonomy] ) ) {
+                $taxonomy_groups[$taxonomy] = [];
+            }
+            $taxonomy_groups[$taxonomy][] = intval( $term_id );
+        }
+    }
+    
+    // Convertir los grupos en formato WP_Query
+    foreach ( $taxonomy_groups as $taxonomy => $term_ids ) {
+        $processed_tax_query[] = [
+            'taxonomy' => $taxonomy,
+            'field' => 'term_id',
+            'terms' => array_unique( $term_ids ), // Eliminar duplicados
+        ];
+    }
+    
+    // Si no hay tax_query procesado, devolver todos los posts
+    if ( empty( $processed_tax_query ) ) {
+        return $posts;
+    }
+    
+    // Filtrar los posts según el tax_query
+    $filtered_posts = [];
+    foreach ( $posts as $post ) {
+        $matches = true;
+        
+        foreach ( $processed_tax_query as $tax_condition ) {
+            $taxonomy = $tax_condition['taxonomy'];
+            $terms = is_array( $tax_condition['terms'] ) ? $tax_condition['terms'] : [ $tax_condition['terms'] ];
+            $field = isset( $tax_condition['field'] ) ? $tax_condition['field'] : 'term_id';
+            $operator = isset( $tax_condition['operator'] ) ? $tax_condition['operator'] : 'IN';
+            
+            // Obtener los términos del post
+            $post_terms = wp_get_post_terms( $post->ID, $taxonomy, [ 'fields' => $field === 'term_id' ? 'ids' : 'slugs' ] );
+            
+            if ( $operator === 'IN' ) {
+                // El post debe tener al menos uno de los términos
+                $intersection = array_intersect( $terms, $post_terms );
+                if ( empty( $intersection ) ) {
+                    $matches = false;
+                    break;
+                }
+            } elseif ( $operator === 'NOT IN' ) {
+                // El post NO debe tener ninguno de los términos
+                $intersection = array_intersect( $terms, $post_terms );
+                if ( !empty( $intersection ) ) {
+                    $matches = false;
+                    break;
+                }
+            } elseif ( $operator === 'AND' ) {
+                // El post debe tener TODOS los términos
+                $intersection = array_intersect( $terms, $post_terms );
+                if ( count( $intersection ) !== count( $terms ) ) {
+                    $matches = false;
+                    break;
+                }
+            }
+        }
+        
+        if ( $matches ) {
+            $filtered_posts[] = $post;
+        }
+    }
+    
+    return $filtered_posts;
 }
 
 /* Run new query if option selected - Prioridad alta para ejecutarse antes que otros filtros */
@@ -138,6 +262,12 @@ function bl_maybe_run_cached_query( $results, $query_obj ) {
         if ( $ppp_value !== '' && $ppp_value !== null && $ppp_value !== false ) {
             $posts_per_page = intval( $ppp_value );
         }
+    }
+    
+    // Leer tax_query del loop (si existe) - esto se aplicará DESPUÉS sobre los posts del caché
+    $loop_tax_query = null;
+    if ( isset( $settings['cached_wp_query_args']['tax_query'] ) && !empty( $settings['cached_wp_query_args']['tax_query'] ) ) {
+        $loop_tax_query = $settings['cached_wp_query_args']['tax_query'];
     }
     
     // Obtener los argumentos de la consulta base
@@ -217,85 +347,15 @@ function bl_maybe_run_cached_query( $results, $query_obj ) {
             }
         }
         
-        // Procesar tax_query - Bricks usa formato especial: "taxonomy::term_id"
-        if ( isset( $query_args['tax_query'] ) ) {
-            $tax_query = $query_args['tax_query'];
-            
-            // Si es string, intentar parsear
-            if ( is_string( $tax_query ) ) {
-                $tax_query_parsed = maybe_unserialize( $tax_query );
-                if ( is_array( $tax_query_parsed ) ) {
-                    $tax_query = $tax_query_parsed;
-                } else {
-                    $tax_query_json = json_decode( $tax_query, true );
-                    if ( is_array( $tax_query_json ) ) {
-                        $tax_query = $tax_query_json;
-                    }
-                }
-            }
-            
-            // Si es array, procesar cada elemento
-            if ( is_array( $tax_query ) ) {
-                $processed_tax_query = [];
-                $taxonomy_groups = []; // Agrupar términos por taxonomía
-                
-                foreach ( $tax_query as $index => $tax_item ) {
-                    $taxonomy = null;
-                    $term_id = null;
-                    
-                    // Si el elemento es un string en formato "taxonomy::term_id" (formato de Bricks)
-                    if ( is_string( $tax_item ) && strpos( $tax_item, '::' ) !== false ) {
-                        list( $taxonomy, $term_id ) = explode( '::', $tax_item, 2 );
-                    }
-                    // Si el elemento ya es un array (formato estándar de WP_Query)
-                    elseif ( is_array( $tax_item ) ) {
-                        // Verificar si tiene la estructura correcta de WP_Query
-                        if ( isset( $tax_item['taxonomy'] ) && isset( $tax_item['terms'] ) ) {
-                            // Ya está en formato correcto, agregarlo directamente
-                            $processed_tax_query[] = $tax_item;
-                            continue;
-                        }
-                        // Si es un array anidado incorrecto (como [0] => ['post_tag::7'])
-                        elseif ( isset( $tax_item[0] ) && is_string( $tax_item[0] ) && strpos( $tax_item[0], '::' ) !== false ) {
-                            list( $taxonomy, $term_id ) = explode( '::', $tax_item[0], 2 );
-                        }
-                    }
-                    
-                    // Si tenemos taxonomía y término, agregarlo al grupo
-                    if ( $taxonomy && $term_id ) {
-                        if ( !isset( $taxonomy_groups[$taxonomy] ) ) {
-                            $taxonomy_groups[$taxonomy] = [];
-                        }
-                        $taxonomy_groups[$taxonomy][] = intval( $term_id );
-                    }
-                }
-                
-                // Convertir los grupos en formato WP_Query
-                foreach ( $taxonomy_groups as $taxonomy => $term_ids ) {
-                    $processed_tax_query[] = [
-                        'taxonomy' => $taxonomy,
-                        'field' => 'term_id',
-                        'terms' => array_unique( $term_ids ), // Eliminar duplicados
-                    ];
-                }
-                
-                // Si procesamos algo, reemplazar el tax_query original
-                if ( !empty( $processed_tax_query ) ) {
-                    $query_args['tax_query'] = $processed_tax_query;
-                }
-            }
-        }
-        
-        // Remover offset y paged de la query base (estos son solo para loops individuales)
-        // PERO mantener posts_per_page si se especifica en la query base
-        // Si posts_per_page NO está en la query base, usar -1 (todos los posts)
+        // IMPORTANTE: Remover tax_query, offset y paged de la query base
+        // Estos parámetros son solo para loops individuales, NO para la query base
+        // El tax_query se aplicará DESPUÉS sobre los posts del caché
+        // NOTA: posts_per_page se maneja después, dependiendo de si es el loop master o no
+        unset( $query_args['tax_query'] );
         unset( $query_args['offset'] );
         unset( $query_args['paged'] );
         
-        // Si posts_per_page no está especificado en la query base, usar -1 (todos los posts)
-        if ( !isset( $query_args['posts_per_page'] ) || empty( $query_args['posts_per_page'] ) ) {
-            $query_args['posts_per_page'] = -1; // -1 = todos los posts disponibles
-        }
+        // posts_per_page se manejará después, cuando sepamos si es el loop master o no
         
         $query_args['no_found_rows'] = false; // Necesario para que funcione correctamente
     } else {
@@ -309,43 +369,81 @@ function bl_maybe_run_cached_query( $results, $query_obj ) {
         ];
     }
     
-    // Obtener el almacenamiento de caché
-    $storage = bl_get_cached_queries_storage();
+    // Obtener el almacenamiento de caché usando variable global directamente
+    global $bl_cached_queries_storage;
+    bl_get_cached_queries_storage(); // Asegurar que la variable global esté inicializada
     
     // Si no existe el WP_Query en caché, crearlo y guardarlo
-    if ( !isset( $storage['posts'][$cache_id] ) ) {
+    // IMPORTANTE: Solo el primer loop (master) crea el caché y puede definir posts_per_page
+    if ( !isset( $bl_cached_queries_storage['posts'][$cache_id] ) ) {
+        // Este es el loop master - puede definir posts_per_page para la query base
+        // Si el loop master tiene posts_per_page en sus argumentos, usarlo
+        // Si no, usar -1 (todos los posts)
+        $master_posts_per_page = ( $posts_per_page !== null && $posts_per_page > 0 ) ? $posts_per_page : -1;
+        
+        // Aplicar posts_per_page del master a la query base
+        $query_args['posts_per_page'] = $master_posts_per_page;
+        
         // Crear el WP_Query completo con los argumentos especificados
         $wp_query = new WP_Query( $query_args );
         
         // Guardar el WP_Query completo en caché
-        $storage['queries'][$cache_id] = $wp_query;
+        $bl_cached_queries_storage['queries'][$cache_id] = $wp_query;
         
-        // Guardar también los posts directamente para acceso más rápido
-        $storage['posts'][$cache_id] = $wp_query->posts;
+        // Guardar solo los IDs de los posts (más eficiente y evita problemas de referencias)
+        // Luego reconstruiremos los objetos cuando sea necesario
+        $post_ids = [];
+        foreach ( $wp_query->posts as $post ) {
+            $post_ids[] = $post->ID;
+        }
+        $bl_cached_queries_storage['posts'][$cache_id] = $post_ids;
     }
     
-    // Obtener todos los posts del caché (usar el array directo en lugar del WP_Query)
-    $all_posts = $storage['posts'][$cache_id];
+    
+    // Obtener los IDs de los posts del caché usando la variable global directamente
+    $cached_post_ids = $bl_cached_queries_storage['posts'][$cache_id];
     
     // Si no hay posts, devolver array vacío
-    if ( empty( $all_posts ) ) {
+    if ( empty( $cached_post_ids ) ) {
         return [];
     }
     
-    // Aplicar offset primero
-    if ( $offset > 0 ) {
-        if ( count( $all_posts ) > $offset ) {
-            $all_posts = array_slice( $all_posts, $offset );
-        } else {
-            // Si el offset es mayor que los posts disponibles, devolver array vacío
-            return [];
+    // Reconstruir TODOS los objetos WP_Post desde los IDs
+    // Esto es necesario para poder filtrar por tax_query
+    $all_cached_posts = [];
+    foreach ( $cached_post_ids as $post_id ) {
+        $post = get_post( $post_id );
+        if ( $post ) {
+            $all_cached_posts[] = $post;
         }
     }
     
-    // Aplicar posts_per_page si se especifica
-    if ( $posts_per_page !== null && $posts_per_page > 0 ) {
-        $all_posts = array_slice( $all_posts, 0, $posts_per_page );
+    // Aplicar filtro de tax_query del loop (si existe) sobre los posts del caché
+    if ( $loop_tax_query !== null ) {
+        $all_cached_posts = bl_filter_posts_by_tax_query( $all_cached_posts, $loop_tax_query );
     }
+    
+    $total_posts = count( $all_cached_posts );
+    
+    // Validar offset
+    if ( $offset >= $total_posts ) {
+        return [];
+    }
+    
+    // Calcular la longitud a extraer
+    $length = null; // null = hasta el final
+    if ( $posts_per_page !== null && $posts_per_page > 0 ) {
+        // Calcular cuántos posts quedan después del offset
+        $remaining = $total_posts - $offset;
+        // Tomar el mínimo entre lo que se pide y lo que queda
+        $length = min( $posts_per_page, $remaining );
+    }
+    
+    // Aplicar offset y posts_per_page sobre los posts filtrados
+    $all_posts = array_slice( $all_cached_posts, $offset, $length );
+    
+    // Reindexar para asegurar índices consecutivos (0, 1, 2, ...)
+    $all_posts = array_values( $all_posts );
     
     // Devolver nuestros resultados filtrados, ignorando cualquier resultado que Bricks haya generado
     // Esto asegura que cada loop use el caché compartido con sus propios filtros
