@@ -16,6 +16,123 @@
  * @since 1.0.0
  */
 
+/**
+ * OPTIMIZACIÓN: Cachear attachment_url_to_postid para evitar queries repetitivas
+ * Esta función se llama muchas veces durante el renderizado, generando queries innecesarias
+ * 
+ * Estrategia: Usar dos filtros con diferentes prioridades
+ * 1. Prioridad baja (1): Interceptar ANTES y verificar nuestro cache estático
+ * 2. Prioridad alta (999): Cachear el resultado DESPUÉS de que WordPress lo obtiene
+ */
+add_filter('attachment_url_to_postid', function($post_id, $url) {
+    // Cache estático para esta petición
+    static $cache = [];
+    static $cache_hits = 0;
+    static $cache_misses = 0;
+    
+    // Si ya está en nuestro cache estático, devolverlo inmediatamente (evita la query)
+    if (isset($cache[$url])) {
+        $cache_hits++;
+        if (defined('WP_DEBUG') && WP_DEBUG && defined('BL_CACHE_DEBUG') && BL_CACHE_DEBUG) {
+            if (class_exists('WPPA_Cache_Query_Logger')) {
+                WPPA_Cache_Query_Logger::log_attachment_cache('HIT', $url, $cache[$url], $cache_hits);
+            } else {
+                error_log(sprintf('ATTACHMENT_CACHE: HIT para URL "%s" - Post ID: %s (Total hits: %d)', 
+                    basename($url), 
+                    $cache[$url] ? $cache[$url] : 'false',
+                    $cache_hits
+                ));
+            }
+        }
+        return $cache[$url];
+    }
+    
+    // Si WordPress ya encontró un resultado (del cache de WordPress), guardarlo en nuestro cache
+    if ($post_id) {
+        $cache[$url] = $post_id;
+        if (defined('WP_DEBUG') && WP_DEBUG && defined('BL_CACHE_DEBUG') && BL_CACHE_DEBUG) {
+            if (class_exists('WPPA_Cache_Query_Logger')) {
+                WPPA_Cache_Query_Logger::log_attachment_cache('SAVED', $url, $post_id);
+            } else {
+                error_log(sprintf('ATTACHMENT_CACHE: Guardado en cache desde WordPress - URL "%s" - Post ID: %s', 
+                    basename($url), 
+                    $post_id
+                ));
+            }
+        }
+        return $post_id;
+    }
+    
+    // Si no hay resultado, NO guardar false todavía porque WordPress aún no ha hecho la query
+    // Dejar que WordPress procese normalmente
+    $cache_misses++;
+    if (defined('WP_DEBUG') && WP_DEBUG && defined('BL_CACHE_DEBUG') && BL_CACHE_DEBUG) {
+        if (class_exists('WPPA_Cache_Query_Logger')) {
+            WPPA_Cache_Query_Logger::log_attachment_cache('MISS', $url, null, $cache_misses);
+        } else {
+            error_log(sprintf('ATTACHMENT_CACHE: MISS para URL "%s" - WordPress procesará (Total misses: %d)', 
+                basename($url), 
+                $cache_misses
+            ));
+        }
+    }
+    return false;
+}, 1, 2); // Prioridad 1 para interceptar ANTES
+
+// Segundo filtro para cachear el resultado DESPUÉS de que WordPress lo obtiene
+add_filter('attachment_url_to_postid', function($post_id, $url) {
+    static $cache = [];
+    
+    // Guardar el resultado en nuestro cache estático (incluso si es false)
+    // Esto evita queries repetitivas en la misma petición
+    if (!isset($cache[$url])) {
+        $cache[$url] = $post_id;
+        if (defined('WP_DEBUG') && WP_DEBUG && defined('BL_CACHE_DEBUG') && BL_CACHE_DEBUG) {
+            if (class_exists('WPPA_Cache_Query_Logger')) {
+                WPPA_Cache_Query_Logger::log_attachment_cache('CACHED_AFTER', $url, $post_id);
+            } else {
+                error_log(sprintf('ATTACHMENT_CACHE: Resultado cacheado DESPUÉS - URL "%s" - Post ID: %s', 
+                    basename($url), 
+                    $post_id ? $post_id : 'false'
+                ));
+            }
+        }
+    }
+    
+    return $post_id;
+}, 999, 2); // Prioridad 999 para ejecutarse DESPUÉS y cachear el resultado final
+
+/**
+ * OPTIMIZACIÓN: Interceptar get_the_terms() para verificar si está usando el cache
+ * Esto nos ayuda a identificar si las queries de términos se están generando durante el renderizado
+ */
+add_filter('get_the_terms', function($terms, $post_id, $taxonomy) {
+    if (defined('WP_DEBUG') && WP_DEBUG && defined('BL_CACHE_DEBUG') && BL_CACHE_DEBUG) {
+        global $wpdb;
+        static $logged_calls = [];
+        $call_key = $post_id . '_' . $taxonomy;
+        
+        // Solo loggear la primera llamada para cada post_id + taxonomía para evitar spam
+        if (!isset($logged_calls[$call_key])) {
+            $queries_before = $wpdb ? $wpdb->num_queries : 0;
+            $logged_calls[$call_key] = true;
+            
+            // Verificar si los términos están en cache
+            $cache_key = "{$taxonomy}_relationships";
+            $cached = wp_cache_get($post_id, $cache_key);
+            
+            if ($cached === false) {
+                error_log(sprintf('TERMS_CACHE_WARNING: get_the_terms() llamado para post_id %d, taxonomía "%s" - Cache NO encontrado (puede generar query)', 
+                    $post_id, 
+                    $taxonomy
+                ));
+            }
+        }
+    }
+    
+    return $terms;
+}, 1, 3);
+
 /****************** 
  * Bricks Builder - Cached WP Query System
  * Cachea un WP_Query completo para reutilizarlo en múltiples loops
@@ -37,7 +154,8 @@ function bl_get_cached_queries_storage() {
     if ( !isset( $bl_cached_queries_storage ) ) {
         $bl_cached_queries_storage = [
             'queries' => [],
-            'posts' => [],
+            'posts' => [],      // Almacena los objetos WP_Post completos
+            'post_ids' => [],   // Almacena solo los IDs para referencia rápida
         ];
     }
     return $bl_cached_queries_storage;
@@ -55,10 +173,12 @@ function bl_clear_cached_query( $cache_id = null ) {
         // Limpiar todos los cachés
         $bl_cached_queries_storage['queries'] = [];
         $bl_cached_queries_storage['posts'] = [];
+        $bl_cached_queries_storage['post_ids'] = [];
     } else {
         // Limpiar solo un caché específico
         unset( $bl_cached_queries_storage['queries'][$cache_id] );
         unset( $bl_cached_queries_storage['posts'][$cache_id] );
+        unset( $bl_cached_queries_storage['post_ids'][$cache_id] );
     }
 }
 
@@ -66,6 +186,15 @@ function bl_clear_cached_query( $cache_id = null ) {
 function bl_get_cached_query_ids() {
     $storage = bl_get_cached_queries_storage();
     return array_keys( $storage['posts'] );
+}
+
+/* Función para obtener los IDs de posts de un caché específico */
+function bl_get_cached_post_ids( $cache_id ) {
+    global $bl_cached_queries_storage;
+    if ( isset( $bl_cached_queries_storage['post_ids'][$cache_id] ) ) {
+        return $bl_cached_queries_storage['post_ids'][$cache_id];
+    }
+    return [];
 }
 
 /* Función helper para filtrar posts por tax_query */
@@ -142,19 +271,96 @@ function bl_filter_posts_by_tax_query( $posts, $tax_query ) {
         return $posts;
     }
     
-    // Filtrar los posts según el tax_query
+    // OPTIMIZACIÓN CRÍTICA: Los términos ya están precargados cuando se creó el caché
+    // Solo necesitamos obtenerlos del cache de WordPress (sin queries adicionales)
+    $post_ids = array_map( function( $post ) {
+        return is_object( $post ) && isset( $post->ID ) ? $post->ID : ( is_numeric( $post ) ? $post : 0 );
+    }, $posts );
+    $post_ids = array_filter( $post_ids );
+    
+    // Obtener todas las taxonomías necesarias
+    $taxonomies_needed = array_unique( array_column( $processed_tax_query, 'taxonomy' ) );
+    
+    // OPTIMIZACIÓN: Los términos ya deberían estar en cache desde la creación del caché
+    // Pero si se están usando taxonomías diferentes o el cache no funcionó, precargar de nuevo
+    // Esto es crítico porque get_the_terms() puede generar queries si el cache no está disponible
+    if ( !empty( $post_ids ) && !empty( $taxonomies_needed ) ) {
+        // Precargar términos para las taxonomías necesarias
+        // update_object_term_cache() hace una sola query por taxonomía, no una query por post
+        update_object_term_cache( $post_ids, 'post', $taxonomies_needed );
+        
+        // También precargar las taxonomías estándar de WordPress si no están en la lista
+        $standard_taxonomies = ['category', 'post_tag', 'post_format'];
+        $missing_taxonomies = array_diff( $standard_taxonomies, $taxonomies_needed );
+        if ( !empty( $missing_taxonomies ) ) {
+            // Precargar también las taxonomías estándar por si se usan durante el renderizado
+            update_object_term_cache( $post_ids, 'post', $missing_taxonomies );
+        }
+    }
+    
+    // Obtener términos usando get_the_terms() que debería usar el cache precargado
+    // Si el cache funciona correctamente, esto NO generará queries adicionales
+    $all_post_terms = [];
+    foreach ( $taxonomies_needed as $taxonomy ) {
+        // Determinar qué field necesitamos según el tax_query
+        $field = 'term_id';
+        foreach ( $processed_tax_query as $tax_condition ) {
+            if ( $tax_condition['taxonomy'] === $taxonomy ) {
+                $field = isset( $tax_condition['field'] ) ? $tax_condition['field'] : 'term_id';
+                break;
+            }
+        }
+        
+        $terms_by_post = [];
+        foreach ( $post_ids as $post_id ) {
+            // get_the_terms() debería usar el cache precargado (sin queries adicionales)
+            // Si genera queries, el problema está en el cache de WordPress, no en nuestro código
+            global $wpdb;
+            $queries_before = $wpdb ? $wpdb->num_queries : 0;
+            
+            $terms = get_the_terms( $post_id, $taxonomy );
+            
+            $queries_after = $wpdb ? $wpdb->num_queries : 0;
+            $queries_generated = $queries_after - $queries_before;
+            
+            if (defined('WP_DEBUG') && WP_DEBUG && defined('BL_CACHE_DEBUG') && BL_CACHE_DEBUG && $queries_generated > 0) {
+                error_log(sprintf('TERMS_CACHE: ⚠️ Query generada para post_id %d, taxonomía "%s" - Queries: %d', 
+                    $post_id, 
+                    $taxonomy,
+                    $queries_generated
+                ));
+            }
+            
+            if ( $terms && !is_wp_error( $terms ) ) {
+                $terms_by_post[$post_id] = array_map( function( $term ) use ( $field ) {
+                    return $field === 'term_id' ? $term->term_id : $term->slug;
+                }, $terms );
+            } else {
+                $terms_by_post[$post_id] = [];
+            }
+        }
+        $all_post_terms[$taxonomy] = $terms_by_post;
+    }
+    
+    // Filtrar los posts según el tax_query usando los términos ya cargados
     $filtered_posts = [];
     foreach ( $posts as $post ) {
+        $post_id = is_object( $post ) && isset( $post->ID ) ? $post->ID : ( is_numeric( $post ) ? $post : 0 );
+        if ( !$post_id ) {
+            continue;
+        }
+        
         $matches = true;
         
         foreach ( $processed_tax_query as $tax_condition ) {
             $taxonomy = $tax_condition['taxonomy'];
             $terms = is_array( $tax_condition['terms'] ) ? $tax_condition['terms'] : [ $tax_condition['terms'] ];
-            $field = isset( $tax_condition['field'] ) ? $tax_condition['field'] : 'term_id';
             $operator = isset( $tax_condition['operator'] ) ? $tax_condition['operator'] : 'IN';
             
-            // Obtener los términos del post
-            $post_terms = wp_get_post_terms( $post->ID, $taxonomy, [ 'fields' => $field === 'term_id' ? 'ids' : 'slugs' ] );
+            // Obtener los términos del post desde el caché (ya cargados)
+            $post_terms = isset( $all_post_terms[$taxonomy][$post_id] ) 
+                ? $all_post_terms[$taxonomy][$post_id] 
+                : [];
             
             if ( $operator === 'IN' ) {
                 // El post debe tener al menos uno de los términos
@@ -194,6 +400,15 @@ function bl_maybe_run_cached_query( $results, $query_obj ) {
     // Solo procesar si es nuestro tipo de query
     if ( $query_obj->object_type !== 'cached_wp_query' ) {
         return $results;
+    }
+    
+    // Debug: Verificar si el sistema de caché se está ejecutando
+    if ( defined( 'WP_DEBUG' ) && WP_DEBUG && defined( 'BL_CACHE_DEBUG' ) && BL_CACHE_DEBUG ) {
+        if (class_exists('WPPA_Cache_Query_Logger')) {
+            WPPA_Cache_Query_Logger::log_cache_processing($query_obj->object_type);
+        } else {
+            error_log( 'BL_CACHE: Procesando cached_wp_query - object_type: ' . $query_obj->object_type );
+        }
     }
     
     // Intentar obtener settings de diferentes lugares donde Bricks puede guardarlos
@@ -390,32 +605,150 @@ function bl_maybe_run_cached_query( $results, $query_obj ) {
         // Guardar el WP_Query completo en caché
         $bl_cached_queries_storage['queries'][$cache_id] = $wp_query;
         
-        // Guardar solo los IDs de los posts (más eficiente y evita problemas de referencias)
-        // Luego reconstruiremos los objetos cuando sea necesario
+        // Guardar los posts completos del WP_Query original
+        // Esto evita hacer get_post() para cada post (que genera queries)
+        // Usamos serialize/unserialize para crear copias independientes y evitar problemas de referencias
+        $cached_posts = [];
         $post_ids = [];
         foreach ( $wp_query->posts as $post ) {
+            // Serializar y deserializar para crear una copia independiente del objeto
+            // Esto evita problemas de referencias y asegura que los posts sean independientes
+            $cached_posts[] = unserialize( serialize( $post ) );
             $post_ids[] = $post->ID;
         }
-        $bl_cached_queries_storage['posts'][$cache_id] = $post_ids;
+        $bl_cached_queries_storage['posts'][$cache_id] = $cached_posts;
+        $bl_cached_queries_storage['post_ids'][$cache_id] = $post_ids;
+        
+        // OPTIMIZACIÓN CRÍTICA: Precargar TODOS los datos necesarios de una vez
+        // Esto se hace UNA SOLA VEZ cuando se crea el caché, no cada vez que se renderiza
+        
+        // 1. Precargar términos (categorías, etiquetas, taxonomías personalizadas)
+        // Obtener todos los post types únicos en el caché
+        $post_types_in_cache = [];
+        foreach ( $cached_posts as $cached_post ) {
+            if ( isset( $cached_post->post_type ) ) {
+                $post_types_in_cache[$cached_post->post_type] = true;
+            }
+        }
+        
+        // Precargar términos para cada post type en el caché
+        // Esto es crítico porque diferentes post types pueden tener diferentes taxonomías
+        if ( !empty( $post_ids ) && !empty( $post_types_in_cache ) ) {
+            foreach ( array_keys( $post_types_in_cache ) as $post_type ) {
+                // Obtener todas las taxonomías de este post type (incluyendo personalizadas)
+                $taxonomies_for_type = get_object_taxonomies( $post_type, 'names' );
+                
+                if ( !empty( $taxonomies_for_type ) ) {
+                    // Obtener los IDs de posts de este tipo específico
+                    $post_ids_for_type = [];
+                    foreach ( $cached_posts as $cached_post ) {
+                        if ( isset( $cached_post->post_type ) && $cached_post->post_type === $post_type ) {
+                            $post_ids_for_type[] = $cached_post->ID;
+                        }
+                    }
+                    
+                    if ( !empty( $post_ids_for_type ) && !empty( $taxonomies_for_type ) ) {
+                        // Precargar todos los términos de este post type en el cache de WordPress
+                        // Esto hace una sola query por taxonomía, no una query por post
+                        update_object_term_cache( $post_ids_for_type, $post_type, $taxonomies_for_type );
+                        
+                        if ( defined('WP_DEBUG') && WP_DEBUG && defined('BL_CACHE_DEBUG') && BL_CACHE_DEBUG ) {
+                            if (class_exists('WPPA_Cache_Query_Logger')) {
+                                WPPA_Cache_Query_Logger::log_terms_precache($post_type, count($post_ids_for_type), $taxonomies_for_type);
+                            } else {
+                                error_log(sprintf('TERMS_PRECACHE: Precargados términos para post_type "%s" - Posts: %d, Taxonomías: %s', 
+                                    $post_type,
+                                    count($post_ids_for_type),
+                                    implode(', ', $taxonomies_for_type)
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // 2. Precargar meta fields (incluyendo _thumbnail_id para imágenes destacadas)
+        // Esto evita queries cuando se llama get_post_meta() o get_post_thumbnail_id()
+        if ( !empty( $post_ids ) ) {
+            // Precargar todos los meta fields de todos los posts de una vez
+            // Esto hace una sola query para todos los meta fields, no una query por post
+            update_postmeta_cache( $post_ids );
+            
+            // 3. Precargar imágenes destacadas (featured images)
+            // Obtener todos los IDs de imágenes destacadas de una vez usando el cache precargado
+            $thumbnail_ids = [];
+            foreach ( $post_ids as $post_id ) {
+                // get_post_thumbnail_id() ahora usará el cache precargado (sin queries adicionales)
+                $thumbnail_id = get_post_thumbnail_id( $post_id );
+                if ( $thumbnail_id ) {
+                    $thumbnail_ids[] = $thumbnail_id;
+                }
+            }
+            
+            // Precargar metadata de attachments (imágenes destacadas)
+            if ( !empty( $thumbnail_ids ) ) {
+                // Precargar meta fields de los attachments
+                update_postmeta_cache( $thumbnail_ids );
+                // Precargar los objetos de attachment en memoria
+                _prime_post_caches( $thumbnail_ids, false, true );
+                
+                // OPTIMIZACIÓN CRÍTICA: Precargar wp_get_attachment_metadata() para todas las imágenes
+                // Esto evita queries cuando Bricks llama a wp_get_attachment_image_src()
+                // wp_get_attachment_metadata() se cachea automáticamente en wp_cache, pero necesitamos precargarlo
+                foreach ( $thumbnail_ids as $thumb_id ) {
+                    // Llamar a wp_get_attachment_metadata() para precargarlo en cache
+                    // Esto carga los metadatos de la imagen (tamaños, dimensiones, etc.)
+                    wp_get_attachment_metadata( $thumb_id );
+                }
+                
+                if ( defined('WP_DEBUG') && WP_DEBUG && defined('BL_CACHE_DEBUG') && BL_CACHE_DEBUG ) {
+                    if (class_exists('WPPA_Cache_Query_Logger')) {
+                        WPPA_Cache_Query_Logger::log_thumbnails_precache(count($thumbnail_ids));
+                    } else {
+                        error_log(sprintf('THUMBNAILS_PRECACHE: Precargadas %d imágenes destacadas (incluyendo metadata)', count($thumbnail_ids)));
+                    }
+                }
+            }
+            
+            // 4. Precargar autores de los posts (evita queries cuando se llama get_the_author())
+            // NOTA: Solo precargamos objetos de usuario, no meta fields, ya que no se usan en las consultas
+            $author_ids = [];
+            foreach ( $cached_posts as $cached_post ) {
+                if ( isset( $cached_post->post_author ) && $cached_post->post_author ) {
+                    $author_ids[] = (int) $cached_post->post_author;
+                }
+            }
+            $author_ids = array_unique( $author_ids );
+            if ( !empty( $author_ids ) ) {
+                // Precargar objetos de usuario en memoria
+                // get_userdata() automáticamente cachea el resultado y es suficiente
+                // No precargamos user meta porque no se usa en las consultas y causaba warnings
+                foreach ( $author_ids as $user_id ) {
+                    // get_userdata() cachea automáticamente el resultado
+                    get_userdata( $user_id );
+                }
+                
+                if ( defined('WP_DEBUG') && WP_DEBUG && defined('BL_CACHE_DEBUG') && BL_CACHE_DEBUG ) {
+                    if (class_exists('WPPA_Cache_Query_Logger')) {
+                        WPPA_Cache_Query_Logger::log_authors_precache(count($author_ids));
+                    } else {
+                        error_log(sprintf('AUTHORS_PRECACHE: Precargados %d autores (solo objetos, sin meta)', count($author_ids)));
+                    }
+                }
+            }
+        }
     }
     
     
-    // Obtener los IDs de los posts del caché usando la variable global directamente
-    $cached_post_ids = $bl_cached_queries_storage['posts'][$cache_id];
+    // Obtener los posts completos del caché (ya están cargados, no necesitamos get_post())
+    $all_cached_posts = isset( $bl_cached_queries_storage['posts'][$cache_id] ) 
+        ? $bl_cached_queries_storage['posts'][$cache_id] 
+        : [];
     
     // Si no hay posts, devolver array vacío
-    if ( empty( $cached_post_ids ) ) {
+    if ( empty( $all_cached_posts ) ) {
         return [];
-    }
-    
-    // Reconstruir TODOS los objetos WP_Post desde los IDs
-    // Esto es necesario para poder filtrar por tax_query
-    $all_cached_posts = [];
-    foreach ( $cached_post_ids as $post_id ) {
-        $post = get_post( $post_id );
-        if ( $post ) {
-            $all_cached_posts[] = $post;
-        }
     }
     
     // Aplicar filtro de tax_query del loop (si existe) sobre los posts del caché
@@ -447,6 +780,61 @@ function bl_maybe_run_cached_query( $results, $query_obj ) {
     
     // Devolver nuestros resultados filtrados, ignorando cualquier resultado que Bricks haya generado
     // Esto asegura que cada loop use el caché compartido con sus propios filtros
+    
+    // Debug: Log cuando se usa el caché
+    if ( defined( 'WP_DEBUG' ) && WP_DEBUG && defined( 'BL_CACHE_DEBUG' ) && BL_CACHE_DEBUG ) {
+        global $wpdb;
+        $queries_so_far = $wpdb ? $wpdb->num_queries : 0;
+        $has_tax_query = $loop_tax_query !== null ? 'Sí' : 'No';
+        $offset_info = $offset > 0 ? "offset: $offset" : 'sin offset';
+        $ppp_info = $posts_per_page !== null ? "ppp: $posts_per_page" : 'sin límite';
+        
+        // Calcular queries generadas en este uso del caché
+        static $last_query_count = 0;
+        $queries_in_this_call = $queries_so_far - $last_query_count;
+        
+        // Verificar si este es el loop master (crea el cache) o un loop que reutiliza el cache
+        global $bl_cached_queries_storage;
+        $is_master_loop = !isset( $bl_cached_queries_storage['posts'][$cache_id] );
+        
+        $last_query_count = $queries_so_far;
+        
+        // Log usando el logger del plugin si está disponible
+        if (class_exists('WPPA_Cache_Query_Logger')) {
+            WPPA_Cache_Query_Logger::log_cache_usage(
+                $cache_id,
+                count($all_posts),
+                $queries_so_far,
+                $queries_in_this_call,
+                $has_tax_query,
+                $offset_info,
+                $ppp_info,
+                $is_master_loop
+            );
+        } else {
+            // Fallback a error_log si el plugin no está disponible
+            if ( !$is_master_loop && $queries_in_this_call > 5 && defined('WP_DEBUG') && WP_DEBUG && defined('BL_CACHE_DEBUG') && BL_CACHE_DEBUG ) {
+                error_log( sprintf( 
+                    '⚠️ BL_CACHE: Cache ID "%s" generó %d queries durante renderizado (Posts: %d) - Esto puede indicar funciones de WordPress que no están usando el cache', 
+                    $cache_id, 
+                    $queries_in_this_call,
+                    count( $all_posts )
+                ) );
+            }
+            
+            error_log( sprintf( 
+                'BL_CACHE: Cache ID "%s" - Posts: %d, Queries totales: %d (+%d en este call), Tax_query: %s, %s, %s', 
+                $cache_id, 
+                count( $all_posts ),
+                $queries_so_far,
+                $queries_in_this_call,
+                $has_tax_query,
+                $offset_info,
+                $ppp_info
+            ) );
+        }
+    }
+    
     return $all_posts;
 }
 
@@ -459,12 +847,36 @@ function bl_setup_cached_post_data( $loop_object, $loop_key, $query_obj ) {
     
     global $post;
     
-    // Si $loop_object es un post object, usarlo directamente
+    // OPTIMIZACIÓN: $loop_object ya debería ser un objeto post completo del caché
+    // NO hacer get_post() que genera queries
     if ( is_object( $loop_object ) && isset( $loop_object->ID ) ) {
+        // Ya es un objeto post, usarlo directamente
         $post = $loop_object;
+    } elseif ( is_numeric( $loop_object ) ) {
+        // Si es solo un ID (no debería pasar, pero por seguridad)
+        // Intentar obtener el post desde el caché primero antes de hacer get_post()
+        global $bl_cached_queries_storage;
+        $found_in_cache = false;
+        
+        if ( isset( $bl_cached_queries_storage['posts'] ) ) {
+            foreach ( $bl_cached_queries_storage['posts'] as $cached_posts ) {
+                foreach ( $cached_posts as $cached_post ) {
+                    if ( is_object( $cached_post ) && isset( $cached_post->ID ) && $cached_post->ID == $loop_object ) {
+                        $post = $cached_post;
+                        $found_in_cache = true;
+                        break 2;
+                    }
+                }
+            }
+        }
+        
+        // Solo hacer get_post() si no se encontró en el caché (no debería pasar)
+        if ( !$found_in_cache ) {
+            $post = get_post( $loop_object );
+        }
     } else {
-        // Si es solo un ID, obtener el post
-        $post = get_post( $loop_object );
+        // No es ni objeto ni ID válido
+        return $loop_object;
     }
     
     if ( $post ) {
@@ -498,6 +910,21 @@ function bl_clear_cached_queries_on_post_save( $post_id, $post ) {
 add_action( 'delete_post', 'bl_clear_cached_queries_on_post_delete', 10, 1 );
 function bl_clear_cached_queries_on_post_delete( $post_id ) {
     bl_clear_cached_query();
+}
+
+// ============================================
+// LOGGING DETALLADO DE QUERIES DURANTE RENDERIZADO
+// ============================================
+// NOTA: El logging detallado ahora se maneja en el plugin WP Performance Auditor
+// Si el plugin está activo, usa sus funciones. Si no, el logging se desactiva.
+// Esto permite mantener el theme limpio y centralizar el logging en el plugin.
+if ( defined('WP_DEBUG') && WP_DEBUG && defined('BL_CACHE_DEBUG') && BL_CACHE_DEBUG ) {
+    // El plugin WPPA_Cache_Query_Logger se encarga de todo el logging
+    // Solo necesitamos asegurarnos de que esté cargado
+    if (!class_exists('WPPA_Cache_Query_Logger')) {
+        // Si el plugin no está disponible, no hacemos logging detallado
+        // El sistema de cache sigue funcionando, solo sin logging
+    }
 }
 
 /* Limpiar todos los cachés cuando cambia el estado de un post (publicado, borrador, etc.) */

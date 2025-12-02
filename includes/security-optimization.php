@@ -463,12 +463,18 @@ class SNN_Security_Optimization {
         if (isset($options['keep_social_meta']) && $options['keep_social_meta']) {
             // Priority 1 to ensure social meta tags are added early, but after plugins like Yoast/Rank Math
             // Use template_redirect to ensure we're in the right context
-            add_action('wp_head', array($this, 'add_social_meta_tags'), 1);
+            // Only add if not already added by another hook
+            if (!has_action('wp_head', array($this, 'add_social_meta_tags'))) {
+                add_action('wp_head', array($this, 'add_social_meta_tags'), 1);
+            }
         }
         
         if (isset($options['keep_seo_meta']) && $options['keep_seo_meta']) {
             // Priority 1 to ensure SEO meta tags are added early
-            add_action('wp_head', array($this, 'add_seo_meta_tags'), 1);
+            // Only add if not already added by another hook
+            if (!has_action('wp_head', array($this, 'add_seo_meta_tags'))) {
+                add_action('wp_head', array($this, 'add_seo_meta_tags'), 1);
+            }
         }
         
         // Protocol Settings
@@ -839,6 +845,7 @@ class SNN_Security_Optimization {
     /**
      * Add social meta tags (Open Graph and Twitter Cards)
      * Only adds if not already added by SEO plugins (Yoast, Rank Math, etc.)
+     * Prevents duplication by using global variable and checking output
      */
     public function add_social_meta_tags() {
         // Check if SEO plugins are active and already adding meta tags
@@ -857,11 +864,20 @@ class SNN_Security_Optimization {
             return; // AIOSEO handles this
         }
         
+        // Use global variable to prevent duplicate execution across all hooks
+        global $snn_social_meta_added;
+        if (isset($snn_social_meta_added) && $snn_social_meta_added) {
+            return; // Already added, prevent duplication
+        }
+        
         // Only add if we're on a singular post/page, front page, or home
         // Note: is_home() returns true for the blog posts page, is_front_page() for the front page
         if (!is_singular() && !is_front_page() && !is_home()) {
             return;
         }
+        
+        // Mark as added BEFORE output to prevent other hooks from adding duplicates
+        $snn_social_meta_added = true;
         
         global $post;
         
@@ -914,32 +930,38 @@ class SNN_Security_Optimization {
             // Site name
             $site_name = get_bloginfo('name');
             
-            // Output Open Graph meta tags
-            echo "\n<!-- SNN Social Meta Tags -->\n";
-            echo '<meta property="og:type" content="article" />' . "\n";
-            echo '<meta property="og:title" content="' . esc_attr($title) . '" />' . "\n";
-            if (!empty($description)) {
-                echo '<meta property="og:description" content="' . esc_attr($description) . '" />' . "\n";
-            }
-            if (!empty($image)) {
-                echo '<meta property="og:image" content="' . esc_url($image) . '" />' . "\n";
-                // WhatsApp requires specific image dimensions (1200x630px recommended)
-                echo '<meta property="og:image:width" content="1200" />' . "\n";
-                echo '<meta property="og:image:height" content="630" />' . "\n";
-            }
-            echo '<meta property="og:url" content="' . esc_url($url) . '" />' . "\n";
-            echo '<meta property="og:site_name" content="' . esc_attr($site_name) . '" />' . "\n";
-            echo '<meta property="og:locale" content="' . esc_attr(get_locale()) . '" />' . "\n";
+            // Build all meta tags in a single output to prevent fragmentation
+            $meta_tags = array();
             
-            // Output Twitter Card meta tags
-            echo '<meta name="twitter:card" content="summary_large_image" />' . "\n";
-            echo '<meta name="twitter:title" content="' . esc_attr($title) . '" />' . "\n";
+            // Open Graph tags (required order: type, title, description, image, url, site_name, locale)
+            $meta_tags[] = '<meta property="og:type" content="article" />';
+            $meta_tags[] = '<meta property="og:title" content="' . esc_attr($title) . '" />';
             if (!empty($description)) {
-                echo '<meta name="twitter:description" content="' . esc_attr($description) . '" />' . "\n";
+                $meta_tags[] = '<meta property="og:description" content="' . esc_attr($description) . '" />';
             }
             if (!empty($image)) {
-                echo '<meta name="twitter:image" content="' . esc_url($image) . '" />' . "\n";
+                $meta_tags[] = '<meta property="og:image" content="' . esc_url($image) . '" />';
+                // WhatsApp requires specific image dimensions (1200x630px recommended)
+                $meta_tags[] = '<meta property="og:image:width" content="1200" />';
+                $meta_tags[] = '<meta property="og:image:height" content="630" />';
             }
+            $meta_tags[] = '<meta property="og:url" content="' . esc_url($url) . '" />';
+            $meta_tags[] = '<meta property="og:site_name" content="' . esc_attr($site_name) . '" />';
+            $meta_tags[] = '<meta property="og:locale" content="' . esc_attr(get_locale()) . '" />';
+            
+            // Twitter Card tags
+            $meta_tags[] = '<meta name="twitter:card" content="summary_large_image" />';
+            $meta_tags[] = '<meta name="twitter:title" content="' . esc_attr($title) . '" />';
+            if (!empty($description)) {
+                $meta_tags[] = '<meta name="twitter:description" content="' . esc_attr($description) . '" />';
+            }
+            if (!empty($image)) {
+                $meta_tags[] = '<meta name="twitter:image" content="' . esc_url($image) . '" />';
+            }
+            
+            // Output all tags in a single block
+            echo "\n<!-- SNN Social Meta Tags -->\n";
+            echo implode("\n", $meta_tags) . "\n";
             echo "<!-- /SNN Social Meta Tags -->\n\n";
         } elseif (is_front_page() || is_home()) {
             // Homepage meta tags
@@ -958,29 +980,37 @@ class SNN_Security_Optimization {
                 $image = set_url_scheme($image, 'https');
             }
             
-            echo "\n<!-- SNN Social Meta Tags -->\n";
-            echo '<meta property="og:type" content="website" />' . "\n";
-            echo '<meta property="og:title" content="' . esc_attr($title) . '" />' . "\n";
-            if (!empty($description)) {
-                echo '<meta property="og:description" content="' . esc_attr($description) . '" />' . "\n";
-            }
-            if (!empty($image)) {
-                echo '<meta property="og:image" content="' . esc_url($image) . '" />' . "\n";
-                echo '<meta property="og:image:width" content="1200" />' . "\n";
-                echo '<meta property="og:image:height" content="630" />' . "\n";
-            }
-            echo '<meta property="og:url" content="' . esc_url($url) . '" />' . "\n";
-            echo '<meta property="og:site_name" content="' . esc_attr($title) . '" />' . "\n";
-            echo '<meta property="og:locale" content="' . esc_attr(get_locale()) . '" />' . "\n";
+            // Build all meta tags in a single output to prevent fragmentation
+            $meta_tags = array();
             
-            echo '<meta name="twitter:card" content="summary_large_image" />' . "\n";
-            echo '<meta name="twitter:title" content="' . esc_attr($title) . '" />' . "\n";
+            // Open Graph tags (required order: type, title, description, image, url, site_name, locale)
+            $meta_tags[] = '<meta property="og:type" content="website" />';
+            $meta_tags[] = '<meta property="og:title" content="' . esc_attr($title) . '" />';
             if (!empty($description)) {
-                echo '<meta name="twitter:description" content="' . esc_attr($description) . '" />' . "\n";
+                $meta_tags[] = '<meta property="og:description" content="' . esc_attr($description) . '" />';
             }
             if (!empty($image)) {
-                echo '<meta name="twitter:image" content="' . esc_url($image) . '" />' . "\n";
+                $meta_tags[] = '<meta property="og:image" content="' . esc_url($image) . '" />';
+                $meta_tags[] = '<meta property="og:image:width" content="1200" />';
+                $meta_tags[] = '<meta property="og:image:height" content="630" />';
             }
+            $meta_tags[] = '<meta property="og:url" content="' . esc_url($url) . '" />';
+            $meta_tags[] = '<meta property="og:site_name" content="' . esc_attr($title) . '" />';
+            $meta_tags[] = '<meta property="og:locale" content="' . esc_attr(get_locale()) . '" />';
+            
+            // Twitter Card tags
+            $meta_tags[] = '<meta name="twitter:card" content="summary_large_image" />';
+            $meta_tags[] = '<meta name="twitter:title" content="' . esc_attr($title) . '" />';
+            if (!empty($description)) {
+                $meta_tags[] = '<meta name="twitter:description" content="' . esc_attr($description) . '" />';
+            }
+            if (!empty($image)) {
+                $meta_tags[] = '<meta name="twitter:image" content="' . esc_url($image) . '" />';
+            }
+            
+            // Output all tags in a single block
+            echo "\n<!-- SNN Social Meta Tags -->\n";
+            echo implode("\n", $meta_tags) . "\n";
             echo "<!-- /SNN Social Meta Tags -->\n\n";
         }
     }
@@ -1013,12 +1043,22 @@ class SNN_Security_Optimization {
     /**
      * Add SEO meta tags (canonical and robots)
      * Only adds if not already added by SEO plugins
+     * Prevents duplication by using global variable
      */
     public function add_seo_meta_tags() {
         // Check if SEO plugins are active
         if (defined('WPSEO_VERSION') || defined('RANK_MATH_VERSION') || defined('AIOSEO_VERSION')) {
             return; // SEO plugins handle this
         }
+        
+        // Use global variable to prevent duplicate execution across all hooks
+        global $snn_seo_meta_added;
+        if (isset($snn_seo_meta_added) && $snn_seo_meta_added) {
+            return; // Already added, prevent duplication
+        }
+        
+        // Mark as added BEFORE output to prevent other hooks from adding duplicates
+        $snn_seo_meta_added = true;
         
         // Only add canonical on singular posts/pages
         if (is_singular()) {
