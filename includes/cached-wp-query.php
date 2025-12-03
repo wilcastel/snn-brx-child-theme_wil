@@ -33,16 +33,9 @@ add_filter('attachment_url_to_postid', function($post_id, $url) {
     // Si ya está en nuestro cache estático, devolverlo inmediatamente (evita la query)
     if (isset($cache[$url])) {
         $cache_hits++;
-        if (defined('WP_DEBUG') && WP_DEBUG && defined('BL_CACHE_DEBUG') && BL_CACHE_DEBUG) {
-            if (class_exists('WPPA_Cache_Query_Logger')) {
-                WPPA_Cache_Query_Logger::log_attachment_cache('HIT', $url, $cache[$url], $cache_hits);
-            } else {
-                error_log(sprintf('ATTACHMENT_CACHE: HIT para URL "%s" - Post ID: %s (Total hits: %d)', 
-                    basename($url), 
-                    $cache[$url] ? $cache[$url] : 'false',
-                    $cache_hits
-                ));
-            }
+        // Solo loguear si el plugin WP Performance Auditor está activo
+        if (defined('WP_DEBUG') && WP_DEBUG && defined('BL_CACHE_DEBUG') && BL_CACHE_DEBUG && class_exists('WPPA_Cache_Query_Logger')) {
+            WPPA_Cache_Query_Logger::log_attachment_cache('HIT', $url, $cache[$url], $cache_hits);
         }
         return $cache[$url];
     }
@@ -50,15 +43,9 @@ add_filter('attachment_url_to_postid', function($post_id, $url) {
     // Si WordPress ya encontró un resultado (del cache de WordPress), guardarlo en nuestro cache
     if ($post_id) {
         $cache[$url] = $post_id;
-        if (defined('WP_DEBUG') && WP_DEBUG && defined('BL_CACHE_DEBUG') && BL_CACHE_DEBUG) {
-            if (class_exists('WPPA_Cache_Query_Logger')) {
-                WPPA_Cache_Query_Logger::log_attachment_cache('SAVED', $url, $post_id);
-            } else {
-                error_log(sprintf('ATTACHMENT_CACHE: Guardado en cache desde WordPress - URL "%s" - Post ID: %s', 
-                    basename($url), 
-                    $post_id
-                ));
-            }
+        // Solo loguear si el plugin WP Performance Auditor está activo
+        if (defined('WP_DEBUG') && WP_DEBUG && defined('BL_CACHE_DEBUG') && BL_CACHE_DEBUG && class_exists('WPPA_Cache_Query_Logger')) {
+            WPPA_Cache_Query_Logger::log_attachment_cache('SAVED', $url, $post_id);
         }
         return $post_id;
     }
@@ -66,15 +53,9 @@ add_filter('attachment_url_to_postid', function($post_id, $url) {
     // Si no hay resultado, NO guardar false todavía porque WordPress aún no ha hecho la query
     // Dejar que WordPress procese normalmente
     $cache_misses++;
-    if (defined('WP_DEBUG') && WP_DEBUG && defined('BL_CACHE_DEBUG') && BL_CACHE_DEBUG) {
-        if (class_exists('WPPA_Cache_Query_Logger')) {
-            WPPA_Cache_Query_Logger::log_attachment_cache('MISS', $url, null, $cache_misses);
-        } else {
-            error_log(sprintf('ATTACHMENT_CACHE: MISS para URL "%s" - WordPress procesará (Total misses: %d)', 
-                basename($url), 
-                $cache_misses
-            ));
-        }
+    // Solo loguear si el plugin WP Performance Auditor está activo
+    if (defined('WP_DEBUG') && WP_DEBUG && defined('BL_CACHE_DEBUG') && BL_CACHE_DEBUG && class_exists('WPPA_Cache_Query_Logger')) {
+        WPPA_Cache_Query_Logger::log_attachment_cache('MISS', $url, null, $cache_misses);
     }
     return false;
 }, 1, 2); // Prioridad 1 para interceptar ANTES
@@ -87,15 +68,9 @@ add_filter('attachment_url_to_postid', function($post_id, $url) {
     // Esto evita queries repetitivas en la misma petición
     if (!isset($cache[$url])) {
         $cache[$url] = $post_id;
-        if (defined('WP_DEBUG') && WP_DEBUG && defined('BL_CACHE_DEBUG') && BL_CACHE_DEBUG) {
-            if (class_exists('WPPA_Cache_Query_Logger')) {
-                WPPA_Cache_Query_Logger::log_attachment_cache('CACHED_AFTER', $url, $post_id);
-            } else {
-                error_log(sprintf('ATTACHMENT_CACHE: Resultado cacheado DESPUÉS - URL "%s" - Post ID: %s', 
-                    basename($url), 
-                    $post_id ? $post_id : 'false'
-                ));
-            }
+        // Solo loguear si el plugin WP Performance Auditor está activo
+        if (defined('WP_DEBUG') && WP_DEBUG && defined('BL_CACHE_DEBUG') && BL_CACHE_DEBUG && class_exists('WPPA_Cache_Query_Logger')) {
+            WPPA_Cache_Query_Logger::log_attachment_cache('CACHED_AFTER', $url, $post_id);
         }
     }
     
@@ -121,11 +96,10 @@ add_filter('get_the_terms', function($terms, $post_id, $taxonomy) {
             $cache_key = "{$taxonomy}_relationships";
             $cached = wp_cache_get($post_id, $cache_key);
             
-            if ($cached === false) {
-                error_log(sprintf('TERMS_CACHE_WARNING: get_the_terms() llamado para post_id %d, taxonomía "%s" - Cache NO encontrado (puede generar query)', 
-                    $post_id, 
-                    $taxonomy
-                ));
+            // Solo loguear si el plugin WP Performance Auditor está activo
+            // El plugin maneja este tipo de warnings internamente
+            if ($cached === false && class_exists('WPPA_Cache_Query_Logger')) {
+                // El plugin intercepta get_the_terms() y genera los warnings automáticamente
             }
         }
     }
@@ -323,12 +297,10 @@ function bl_filter_posts_by_tax_query( $posts, $tax_query ) {
             $queries_after = $wpdb ? $wpdb->num_queries : 0;
             $queries_generated = $queries_after - $queries_before;
             
-            if (defined('WP_DEBUG') && WP_DEBUG && defined('BL_CACHE_DEBUG') && BL_CACHE_DEBUG && $queries_generated > 0) {
-                error_log(sprintf('TERMS_CACHE: ⚠️ Query generada para post_id %d, taxonomía "%s" - Queries: %d', 
-                    $post_id, 
-                    $taxonomy,
-                    $queries_generated
-                ));
+            // Solo loguear si el plugin WP Performance Auditor está activo
+            // El plugin maneja este tipo de warnings internamente
+            if (defined('WP_DEBUG') && WP_DEBUG && defined('BL_CACHE_DEBUG') && BL_CACHE_DEBUG && class_exists('WPPA_Cache_Query_Logger') && $queries_generated > 0) {
+                // El plugin intercepta get_the_terms() y genera los warnings automáticamente
             }
             
             if ( $terms && !is_wp_error( $terms ) ) {
@@ -403,12 +375,9 @@ function bl_maybe_run_cached_query( $results, $query_obj ) {
     }
     
     // Debug: Verificar si el sistema de caché se está ejecutando
-    if ( defined( 'WP_DEBUG' ) && WP_DEBUG && defined( 'BL_CACHE_DEBUG' ) && BL_CACHE_DEBUG ) {
-        if (class_exists('WPPA_Cache_Query_Logger')) {
-            WPPA_Cache_Query_Logger::log_cache_processing($query_obj->object_type);
-        } else {
-            error_log( 'BL_CACHE: Procesando cached_wp_query - object_type: ' . $query_obj->object_type );
-        }
+    // Solo loguear si el plugin WP Performance Auditor está activo
+    if ( defined( 'WP_DEBUG' ) && WP_DEBUG && defined( 'BL_CACHE_DEBUG' ) && BL_CACHE_DEBUG && class_exists('WPPA_Cache_Query_Logger') ) {
+        WPPA_Cache_Query_Logger::log_cache_processing($query_obj->object_type);
     }
     
     // Intentar obtener settings de diferentes lugares donde Bricks puede guardarlos
@@ -652,16 +621,9 @@ function bl_maybe_run_cached_query( $results, $query_obj ) {
                         // Esto hace una sola query por taxonomía, no una query por post
                         update_object_term_cache( $post_ids_for_type, $post_type, $taxonomies_for_type );
                         
-                        if ( defined('WP_DEBUG') && WP_DEBUG && defined('BL_CACHE_DEBUG') && BL_CACHE_DEBUG ) {
-                            if (class_exists('WPPA_Cache_Query_Logger')) {
-                                WPPA_Cache_Query_Logger::log_terms_precache($post_type, count($post_ids_for_type), $taxonomies_for_type);
-                            } else {
-                                error_log(sprintf('TERMS_PRECACHE: Precargados términos para post_type "%s" - Posts: %d, Taxonomías: %s', 
-                                    $post_type,
-                                    count($post_ids_for_type),
-                                    implode(', ', $taxonomies_for_type)
-                                ));
-                            }
+                        // Solo loguear si el plugin WP Performance Auditor está activo
+                        if ( defined('WP_DEBUG') && WP_DEBUG && defined('BL_CACHE_DEBUG') && BL_CACHE_DEBUG && class_exists('WPPA_Cache_Query_Logger') ) {
+                            WPPA_Cache_Query_Logger::log_terms_precache($post_type, count($post_ids_for_type), $taxonomies_for_type);
                         }
                     }
                 }
@@ -702,12 +664,9 @@ function bl_maybe_run_cached_query( $results, $query_obj ) {
                     wp_get_attachment_metadata( $thumb_id );
                 }
                 
-                if ( defined('WP_DEBUG') && WP_DEBUG && defined('BL_CACHE_DEBUG') && BL_CACHE_DEBUG ) {
-                    if (class_exists('WPPA_Cache_Query_Logger')) {
-                        WPPA_Cache_Query_Logger::log_thumbnails_precache(count($thumbnail_ids));
-                    } else {
-                        error_log(sprintf('THUMBNAILS_PRECACHE: Precargadas %d imágenes destacadas (incluyendo metadata)', count($thumbnail_ids)));
-                    }
+                // Solo loguear si el plugin WP Performance Auditor está activo
+                if ( defined('WP_DEBUG') && WP_DEBUG && defined('BL_CACHE_DEBUG') && BL_CACHE_DEBUG && class_exists('WPPA_Cache_Query_Logger') ) {
+                    WPPA_Cache_Query_Logger::log_thumbnails_precache(count($thumbnail_ids));
                 }
             }
             
@@ -729,12 +688,9 @@ function bl_maybe_run_cached_query( $results, $query_obj ) {
                     get_userdata( $user_id );
                 }
                 
-                if ( defined('WP_DEBUG') && WP_DEBUG && defined('BL_CACHE_DEBUG') && BL_CACHE_DEBUG ) {
-                    if (class_exists('WPPA_Cache_Query_Logger')) {
-                        WPPA_Cache_Query_Logger::log_authors_precache(count($author_ids));
-                    } else {
-                        error_log(sprintf('AUTHORS_PRECACHE: Precargados %d autores (solo objetos, sin meta)', count($author_ids)));
-                    }
+                // Solo loguear si el plugin WP Performance Auditor está activo
+                if ( defined('WP_DEBUG') && WP_DEBUG && defined('BL_CACHE_DEBUG') && BL_CACHE_DEBUG && class_exists('WPPA_Cache_Query_Logger') ) {
+                    WPPA_Cache_Query_Logger::log_authors_precache(count($author_ids));
                 }
             }
         }
@@ -799,8 +755,8 @@ function bl_maybe_run_cached_query( $results, $query_obj ) {
         
         $last_query_count = $queries_so_far;
         
-        // Log usando el logger del plugin si está disponible
-        if (class_exists('WPPA_Cache_Query_Logger')) {
+        // Solo loguear si el plugin WP Performance Auditor está activo
+        if ( defined('WP_DEBUG') && WP_DEBUG && defined('BL_CACHE_DEBUG') && BL_CACHE_DEBUG && class_exists('WPPA_Cache_Query_Logger') ) {
             WPPA_Cache_Query_Logger::log_cache_usage(
                 $cache_id,
                 count($all_posts),
@@ -811,27 +767,6 @@ function bl_maybe_run_cached_query( $results, $query_obj ) {
                 $ppp_info,
                 $is_master_loop
             );
-        } else {
-            // Fallback a error_log si el plugin no está disponible
-            if ( !$is_master_loop && $queries_in_this_call > 5 && defined('WP_DEBUG') && WP_DEBUG && defined('BL_CACHE_DEBUG') && BL_CACHE_DEBUG ) {
-                error_log( sprintf( 
-                    '⚠️ BL_CACHE: Cache ID "%s" generó %d queries durante renderizado (Posts: %d) - Esto puede indicar funciones de WordPress que no están usando el cache', 
-                    $cache_id, 
-                    $queries_in_this_call,
-                    count( $all_posts )
-                ) );
-            }
-            
-            error_log( sprintf( 
-                'BL_CACHE: Cache ID "%s" - Posts: %d, Queries totales: %d (+%d en este call), Tax_query: %s, %s, %s', 
-                $cache_id, 
-                count( $all_posts ),
-                $queries_so_far,
-                $queries_in_this_call,
-                $has_tax_query,
-                $offset_info,
-                $ppp_info
-            ) );
         }
     }
     

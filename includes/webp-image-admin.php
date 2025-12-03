@@ -23,28 +23,13 @@ function snn_render_webp_optimization_page() {
     
     $options = get_option('snn_webp_options', array());
     
-    // Get image statistics
-    $total_images = wp_count_attachments('image');
-    $total_count = ($total_images->inherit ?? 0) + ($total_images->private ?? 0) + ($total_images->trash ?? 0);
-    $webp_images = snn_count_webp_images();
-    $saved_space = snn_calculate_saved_space();
-    // Disk-based counts for conversion rate
-    $disk_counts = snn_count_images_on_disk();
-    
-    // Count pending images (JPG/PNG without WebP)
-    $pending_info = snn_count_pending_images();
-    $pending_count = $pending_info['count'];
-    
-    // Calculate conversion rate properly
+    // Las estadísticas se cargan de forma asíncrona para no bloquear la página
+    // Mostramos placeholders mientras se cargan
+    $total_count = 0;
+    $webp_images = 0;
+    $saved_space = '0 B';
     $conversion_rate = 0;
-    if ($total_count > 0) {
-        $conversion_rate = round(($webp_images / $total_count) * 100, 1);
-    } else if ($webp_images > 0) {
-        // If total is 0 but we have WebP images, there might be an issue with wp_count_attachments
-        // Let's get a more accurate count
-        $total_count = snn_get_accurate_image_count();
-        $conversion_rate = $total_count > 0 ? round(($webp_images / $total_count) * 100, 1) : 0;
-    }
+    $pending_count = 0;
     
     ?>
     <div class="wrap">
@@ -54,30 +39,40 @@ function snn_render_webp_optimization_page() {
             <div class="snn-webp-stats">
                 <h2><?php _e('Image Statistics', 'snn'); ?></h2>
                 
-                <div class="stats-grid">
+                <div class="stats-grid" id="webp-stats-grid">
                     <div class="stat-item">
-                        <span class="stat-number"><?php echo number_format($total_count); ?></span>
+                        <span class="stat-number" id="stat-total-images">
+                            <span class="spinner is-active" style="float: none; margin: 0;"></span>
+                        </span>
                         <span class="stat-label"><?php _e('Total Images', 'snn'); ?></span>
                     </div>
                     <div class="stat-item">
-                        <span class="stat-number"><?php echo number_format($webp_images); ?></span>
+                        <span class="stat-number" id="stat-webp-images">
+                            <span class="spinner is-active" style="float: none; margin: 0;"></span>
+                        </span>
                         <span class="stat-label"><?php _e('WebP Images', 'snn'); ?></span>
                     </div>
                     <div class="stat-item">
-                        <span class="stat-number"><?php echo $saved_space; ?></span>
+                        <span class="stat-number" id="stat-saved-space">
+                            <span class="spinner is-active" style="float: none; margin: 0;"></span>
+                        </span>
                         <span class="stat-label"><?php _e('Space Saved', 'snn'); ?></span>
                     </div>
                     <div class="stat-item">
-                        <span class="stat-number"><?php echo number_format_i18n($disk_counts['rate'], 1); ?>%</span>
+                        <span class="stat-number" id="stat-conversion-rate">
+                            <span class="spinner is-active" style="float: none; margin: 0;"></span>
+                        </span>
                         <span class="stat-label"><?php _e('Conversion Rate', 'snn'); ?></span>
                     </div>
-                    <div class="stat-item <?php echo $pending_count > 0 ? 'stat-warning' : 'stat-success'; ?>">
-                        <span class="stat-number"><?php echo number_format($pending_count); ?></span>
+                    <div class="stat-item" id="stat-pending-item">
+                        <span class="stat-number" id="stat-pending-count">
+                            <span class="spinner is-active" style="float: none; margin: 0;"></span>
+                        </span>
                         <span class="stat-label"><?php _e('Pending Conversion', 'snn'); ?></span>
                     </div>
                 </div>
                 
-                <?php if ($pending_count > 0): ?>
+                <div id="webp-pending-alert" style="display: none;">
                 <div class="snn-pending-alert">
                     <p><strong><?php _e('⚠️ Imágenes pendientes:', 'snn'); ?></strong></p>
                     <p><?php 
@@ -90,13 +85,19 @@ function snn_render_webp_optimization_page() {
                         <?php _e('Convertir Imágenes Pendientes', 'snn'); ?>
                     </button>
                 </div>
-                <?php endif; ?>
             </div>
             
             <div class="snn-webp-actions">
                 <h2><?php _e('Image Management', 'snn'); ?></h2>
                 
                 <div class="snn-webp-actions-buttons">
+                    <button id="convert-recent-posts-images" class="button button-primary" style="margin-bottom: 10px;">
+                        <?php _e('Convertir Imágenes de los 100 Últimos Posts', 'snn'); ?>
+                    </button>
+                    <p class="description" style="margin-bottom: 15px;">
+                        <?php _e('Convierte las imágenes destacadas y las imágenes del contenido de los 100 posts más recientes a formato WebP.', 'snn'); ?>
+                    </p>
+                    
                     <input type="text" id="snn-folder-path" class="regular-text" style="min-width:340px" />
                     <button id="convert-folder" class="button button-primary">
                         <?php _e('Convert Folder to WebP', 'snn'); ?>
@@ -727,6 +728,114 @@ function snn_render_webp_optimization_page() {
             totalPending: 0
         };
         
+        // Convert images from recent posts
+        let recentPostsConversionState = {
+            isRunning: false,
+            totalProcessed: 0,
+            totalConverted: 0,
+            totalErrors: 0,
+            offset: 0
+        };
+        
+        $('#convert-recent-posts-images').on('click', function() {
+            if (recentPostsConversionState.isRunning) {
+                stopRecentPostsConversion();
+                return;
+            }
+            
+            if (!confirm('<?php _e('¿Convertir imágenes de los 100 últimos posts? Esto puede tardar varios minutos.', 'snn'); ?>')) {
+                return;
+            }
+            
+            const button = $('#convert-recent-posts-images');
+            button.prop('disabled', true).text('<?php _e('Convirtiendo...', 'snn'); ?>');
+            
+            recentPostsConversionState.isRunning = true;
+            recentPostsConversionState.totalProcessed = 0;
+            recentPostsConversionState.totalConverted = 0;
+            recentPostsConversionState.totalErrors = 0;
+            recentPostsConversionState.offset = 0;
+            
+            showWebPResults('info', '<?php _e('Iniciando conversión de imágenes de los 100 últimos posts...', 'snn'); ?>');
+            processRecentPostsBatch();
+        });
+        
+        function stopRecentPostsConversion() {
+            recentPostsConversionState.isRunning = false;
+            const button = $('#convert-recent-posts-images');
+            button.prop('disabled', false).text('<?php _e('Convertir Imágenes de los 100 Últimos Posts', 'snn'); ?>');
+            showWebPResults('warning', '<?php _e('Conversión detenida por el usuario', 'snn'); ?>');
+        }
+        
+        function processRecentPostsBatch() {
+            if (!recentPostsConversionState.isRunning) {
+                return;
+            }
+            
+            $.ajax({
+                url: ajaxurl,
+                type: 'POST',
+                data: {
+                    action: 'snn_convert_recent_posts_images',
+                    nonce: '<?php echo wp_create_nonce('snn_webp_nonce'); ?>',
+                    posts_per_batch: 10,
+                    offset: recentPostsConversionState.offset,
+                    total_processed: recentPostsConversionState.totalProcessed,
+                    total_converted: recentPostsConversionState.totalConverted,
+                    total_errors: recentPostsConversionState.totalErrors
+                },
+                success: function(response) {
+                    if (response.success) {
+                        recentPostsConversionState.totalProcessed = response.data.total_processed;
+                        recentPostsConversionState.totalConverted = response.data.total_converted;
+                        recentPostsConversionState.totalErrors = response.data.total_errors;
+                        recentPostsConversionState.offset = response.data.next_offset;
+                        
+                        const progress = response.data.progress_percent || 0;
+                        updateProgress(progress);
+                        
+                        const message = response.data.message + '<br>' +
+                            '<strong><?php _e('Posts procesados:', 'snn'); ?></strong> ' + response.data.total_processed + '<br>' +
+                            '<strong><?php _e('Imágenes convertidas:', 'snn'); ?></strong> ' + response.data.total_converted + '<br>' +
+                            '<strong><?php _e('Errores:', 'snn'); ?></strong> ' + response.data.total_errors;
+                        
+                        showWebPResults('info', message);
+                        
+                        if (response.data.has_more) {
+                            setTimeout(processRecentPostsBatch, 500);
+                        } else {
+                            completeRecentPostsConversion();
+                        }
+                    } else {
+                        showWebPResults('error', response.data.message || '<?php _e('Error en la conversión', 'snn'); ?>');
+                        stopRecentPostsConversion();
+                    }
+                },
+                error: function() {
+                    showWebPResults('error', '<?php _e('Error de conexión', 'snn'); ?>');
+                    stopRecentPostsConversion();
+                }
+            });
+        }
+        
+        function completeRecentPostsConversion() {
+            recentPostsConversionState.isRunning = false;
+            const button = $('#convert-recent-posts-images');
+            button.prop('disabled', false).text('<?php _e('Convertir Imágenes de los 100 Últimos Posts', 'snn'); ?>');
+            
+            updateProgress(100);
+            
+            // Invalidar cache y recargar estadísticas
+            $(document).trigger('webp-conversion-complete');
+            
+            const message = '<?php _e('Conversión completada!', 'snn'); ?>' +
+                '<br><strong><?php _e('Posts procesados:', 'snn'); ?></strong> ' + recentPostsConversionState.totalProcessed +
+                '<br><strong><?php _e('Imágenes convertidas:', 'snn'); ?></strong> ' + recentPostsConversionState.totalConverted +
+                '<br><strong><?php _e('Errores:', 'snn'); ?></strong> ' + recentPostsConversionState.totalErrors;
+            
+            showWebPResults('success', message);
+        }
+        
         $('#convert-pending-images').on('click', function() {
             if (pendingConversionState.isRunning) {
                 stopPendingConversion();
@@ -832,6 +941,9 @@ function snn_render_webp_optimization_page() {
             
             showWebPResults('success', message);
             
+            // Invalidar cache y recargar estadísticas
+            $(document).trigger('webp-conversion-complete');
+            
             // Reload page after 3 seconds to update stats
             setTimeout(function() {
                 location.reload();
@@ -895,8 +1007,7 @@ function snn_get_accurate_image_count() {
         AND post_status = 'inherit'
     ");
     
-    // Debug: Log the count
-    error_log('SNN WebP Debug - Total images found: ' . $count);
+    // Debug: Log removido - Solo se usa cuando es necesario para debugging
     
     return intval($count);
 }
@@ -920,9 +1031,7 @@ function snn_count_webp_images() {
         }
     }
     
-    // Debug: Log the count
-    error_log('SNN WebP Debug - WebP files found: ' . $count);
-    error_log('SNN WebP Debug - Upload directory: ' . $upload_basedir);
+    // Debug: Log removido - Solo se usa cuando es necesario para debugging
     
     return $count;
 }

@@ -43,16 +43,28 @@ class SNN_WebP_Image_Optimizer {
         add_action('wp_handle_upload', array($this, 'convert_uploaded_image'));
         add_action('attachment_updated', array($this, 'convert_attachment_image'));
         
-        // Frontend hooks
+        // Frontend hooks - Reemplazar URLs en el HTML generado
+        // Prioridad alta (10) para asegurar que se ejecute antes que otros filtros
         add_filter('wp_get_attachment_image_src', array($this, 'replace_with_webp'), 10, 4);
-        add_filter('the_content', array($this, 'replace_content_images'));
+        add_filter('wp_get_attachment_image_url', array($this, 'replace_attachment_image_url'), 10, 3);
+        add_filter('wp_get_attachment_url', array($this, 'replace_attachment_url_with_webp'), 10, 2);
+        add_filter('the_content', array($this, 'replace_content_images'), 10, 1);
+        add_filter('wp_calculate_image_srcset', array($this, 'replace_srcset_with_webp'), 10, 5);
+        add_filter('the_post_thumbnail_url', array($this, 'replace_post_thumbnail_url'), 10, 3);
+        
+        // Preload de imágenes críticas
         add_action('wp_head', array($this, 'preload_critical_images'));
         
-        // Automatic WebP serving
+        // Automatic WebP serving (para peticiones directas de imágenes)
         add_action('template_redirect', array($this, 'serve_webp_images'));
-        add_filter('wp_get_attachment_url', array($this, 'replace_attachment_url_with_webp'), 10, 2);
         add_action('init', array($this, 'handle_image_requests'));
-        add_filter('wp_calculate_image_srcset', array($this, 'replace_srcset_with_webp'), 10, 5);
+        
+        // Output buffer para interceptar HTML final y reemplazar URLs (última línea de defensa)
+        // Esto captura URLs que Bricks Builder u otros plugins puedan generar directamente
+        if (!is_admin()) {
+            add_action('template_redirect', array($this, 'start_output_buffer'), 1);
+            add_action('shutdown', array($this, 'end_output_buffer'), 999);
+        }
         
         // Admin hooks
         add_action('admin_init', array($this, 'register_settings'));
@@ -63,6 +75,8 @@ class SNN_WebP_Image_Optimizer {
         add_action('wp_ajax_snn_test_conversion', array($this, 'test_conversion_ajax'));
         add_action('wp_ajax_snn_convert_folder', array($this, 'convert_folder_ajax'));
         add_action('wp_ajax_snn_convert_pending_images', array($this, 'convert_pending_images_ajax'));
+        add_action('wp_ajax_snn_convert_recent_posts_images', array($this, 'convert_recent_posts_images_ajax'));
+        add_action('wp_ajax_snn_get_webp_statistics', array($this, 'get_webp_statistics_ajax'));
         
         // WP Cron hooks for background processing
         add_action('snn_webp_background_conversion', array($this, 'process_background_conversion'));
@@ -191,6 +205,309 @@ class SNN_WebP_Image_Optimizer {
                 $total
             )
         ));
+    }
+    
+    /**
+     * Convert images from the 100 most recent posts
+     * This includes featured images and images in post content
+     */
+    public function convert_recent_posts_images_ajax() {
+        if (!wp_verify_nonce($_POST['nonce'], 'snn_webp_nonce')) {
+            wp_die('Invalid nonce');
+        }
+        if (!current_user_can('manage_options')) {
+            wp_die('Insufficient permissions');
+        }
+        
+        // Check if WebP conversion is disabled
+        if (!($this->options['enable_webp'] ?? true)) {
+            wp_send_json_error(array('message' => __('WebP conversion is disabled', 'snn')));
+        }
+        
+        $posts_per_batch = intval($_POST['posts_per_batch'] ?? 10);
+        $offset = intval($_POST['offset'] ?? 0);
+        $total_processed = intval($_POST['total_processed'] ?? 0);
+        $total_converted = intval($_POST['total_converted'] ?? 0);
+        $total_errors = intval($_POST['total_errors'] ?? 0);
+        
+        // Get recent posts (100 total, but process in batches)
+        $posts = get_posts(array(
+            'post_type' => 'any',
+            'post_status' => 'publish',
+            'numberposts' => $posts_per_batch,
+            'offset' => $offset,
+            'orderby' => 'date',
+            'order' => 'DESC',
+            'posts_per_page' => $posts_per_batch
+        ));
+        
+        $batch_converted = 0;
+        $batch_errors = 0;
+        $images_processed = 0;
+        
+        foreach ($posts as $post) {
+            // 1. Convert featured image
+            $featured_image_id = get_post_thumbnail_id($post->ID);
+            if ($featured_image_id) {
+                $images_processed++;
+                $file_path = get_attached_file($featured_image_id);
+                if ($file_path && file_exists($file_path)) {
+                    $result = $this->convert_image_to_webp($file_path);
+                    if ($result) {
+                        $batch_converted++;
+                    } else {
+                        $batch_errors++;
+                    }
+                    // Convert all sizes of featured image
+                    $this->convert_all_image_sizes($featured_image_id);
+                }
+            }
+            
+            // 2. Convert images in post content
+            $content = $post->post_content;
+            if (!empty($content)) {
+                // Find image attachments in content
+                preg_match_all('/wp-image-(\d+)/', $content, $matches);
+                if (!empty($matches[1])) {
+                    $attachment_ids = array_unique(array_map('intval', $matches[1]));
+                    foreach ($attachment_ids as $attachment_id) {
+                        $images_processed++;
+                        $file_path = get_attached_file($attachment_id);
+                        if ($file_path && file_exists($file_path)) {
+                            $result = $this->convert_image_to_webp($file_path);
+                            if ($result) {
+                                $batch_converted++;
+                            } else {
+                                $batch_errors++;
+                            }
+                            // Convert all sizes
+                            $this->convert_all_image_sizes($attachment_id);
+                        }
+                    }
+                }
+            }
+        }
+        
+        $total_processed += count($posts);
+        $total_converted += $batch_converted;
+        $total_errors += $batch_errors;
+        
+        // Check if we've processed 100 posts
+        $has_more = ($offset + $posts_per_batch) < 100;
+        
+        wp_send_json_success(array(
+            'message' => $has_more ? sprintf(__('Procesados %d posts (batch)', 'snn'), count($posts)) : __('Todos los posts procesados', 'snn'),
+            'batch_converted' => $batch_converted,
+            'batch_errors' => $batch_errors,
+            'batch_processed' => count($posts),
+            'images_processed' => $images_processed,
+            'total_converted' => $total_converted,
+            'total_errors' => $total_errors,
+            'total_processed' => $total_processed,
+            'has_more' => $has_more,
+            'next_offset' => $offset + $posts_per_batch,
+            'progress_percent' => min(100, round(($total_processed / 100) * 100, 1))
+        ));
+    }
+    
+    /**
+     * Get WebP statistics (for AJAX loading)
+     * This allows the admin page to load quickly while stats calculate in background
+     */
+    public function get_webp_statistics_ajax() {
+        if (!current_user_can('manage_options')) {
+            wp_send_json_error(array('message' => __('Insufficient permissions', 'snn')));
+        }
+        
+        // Check if force refresh is requested
+        $force_refresh = isset($_POST['force_refresh']) && $_POST['force_refresh'];
+        
+        // Check cache first (cache for 5 minutes) unless force refresh
+        $cache_key = 'snn_webp_statistics';
+        $cached_stats = get_transient($cache_key);
+        
+        if ($cached_stats !== false && !$force_refresh) {
+            wp_send_json_success($cached_stats);
+            return;
+        }
+        
+        // Delete cache if force refresh
+        if ($force_refresh) {
+            delete_transient($cache_key);
+        }
+        
+        // Calculate statistics
+        $total_images = wp_count_attachments('image');
+        $total_count = ($total_images->inherit ?? 0) + ($total_images->private ?? 0) + ($total_images->trash ?? 0);
+        
+        // If total is 0, try more accurate count
+        if ($total_count == 0) {
+            $total_count = $this->get_accurate_image_count();
+        }
+        
+        $webp_images = $this->count_webp_images();
+        $saved_space = $this->calculate_saved_space();
+        $disk_counts = $this->count_images_on_disk();
+        $pending_info = $this->count_pending_images();
+        $pending_count = $pending_info['count'];
+        
+        // Calculate conversion rate
+        $conversion_rate = 0;
+        if ($total_count > 0) {
+            $conversion_rate = round(($webp_images / $total_count) * 100, 1);
+        } else if ($webp_images > 0 && $disk_counts['total'] > 0) {
+            $conversion_rate = round(($webp_images / $disk_counts['total']) * 100, 1);
+        }
+        
+        $stats = array(
+            'total_images' => $total_count,
+            'webp_images' => $webp_images,
+            'saved_space' => $saved_space,
+            'conversion_rate' => $conversion_rate,
+            'pending_count' => $pending_count,
+            'disk_counts' => $disk_counts
+        );
+        
+        // Cache for 5 minutes
+        set_transient($cache_key, $stats, 5 * MINUTE_IN_SECONDS);
+        
+        wp_send_json_success($stats);
+    }
+    
+    /**
+     * Count WebP images (internal method)
+     */
+    private function count_webp_images() {
+        $upload_dir = wp_upload_dir();
+        $upload_basedir = $upload_dir['basedir'];
+        
+        // Count WebP files in uploads directory recursively
+        $count = 0;
+        $webp_dir = $upload_basedir . '/webp/';
+        
+        if (is_dir($webp_dir)) {
+            $iterator = new RecursiveIteratorIterator(
+                new RecursiveDirectoryIterator($webp_dir, RecursiveDirectoryIterator::SKIP_DOTS)
+            );
+            
+            foreach ($iterator as $file) {
+                if ($file->isFile() && strtolower($file->getExtension()) === 'webp') {
+                    $count++;
+                }
+            }
+        }
+        
+        return $count;
+    }
+    
+    /**
+     * Calculate saved space (internal method)
+     */
+    private function calculate_saved_space() {
+        $upload_dir = wp_upload_dir();
+        $upload_basedir = $upload_dir['basedir'];
+        $webp_dir = $upload_basedir . '/webp/';
+        
+        $total_size = 0;
+        
+        if (is_dir($webp_dir)) {
+            $iterator = new RecursiveIteratorIterator(
+                new RecursiveDirectoryIterator($webp_dir, RecursiveDirectoryIterator::SKIP_DOTS)
+            );
+            
+            foreach ($iterator as $file) {
+                if ($file->isFile() && strtolower($file->getExtension()) === 'webp') {
+                    $total_size += $file->getSize();
+                }
+            }
+        }
+        
+        return size_format($total_size, 2);
+    }
+    
+    /**
+     * Count images on disk (internal method)
+     */
+    private function count_images_on_disk() {
+        $upload_dir = wp_upload_dir();
+        $base = $upload_dir['basedir'];
+        $counts = array('jpg' => 0, 'jpeg' => 0, 'png' => 0, 'webp' => 0);
+        
+        try {
+            $iterator = new RecursiveIteratorIterator(
+                new RecursiveDirectoryIterator($base, RecursiveDirectoryIterator::SKIP_DOTS)
+            );
+            
+            foreach ($iterator as $file) {
+                if (!$file->isFile()) {
+                    continue;
+                }
+                
+                $ext = strtolower($file->getExtension());
+                if (isset($counts[$ext])) {
+                    $counts[$ext]++;
+                }
+            }
+        } catch (Exception $e) {
+            // Error reading directory
+        }
+        
+        $total = $counts['jpg'] + $counts['jpeg'] + $counts['png'] + $counts['webp'];
+        $rate = $total > 0 ? round(($counts['webp'] / $total) * 100, 1) : 0;
+        
+        return array(
+            'jpg' => $counts['jpg'],
+            'jpeg' => $counts['jpeg'],
+            'png' => $counts['png'],
+            'webp' => $counts['webp'],
+            'total' => $total,
+            'rate' => $rate
+        );
+    }
+    
+    /**
+     * Count pending images (internal method)
+     */
+    private function count_pending_images() {
+        $upload_dir = wp_upload_dir();
+        $base = $upload_dir['basedir'];
+        $pending = 0;
+        $total_size = 0;
+        
+        try {
+            $iterator = new RecursiveIteratorIterator(
+                new RecursiveDirectoryIterator($base, RecursiveDirectoryIterator::SKIP_DOTS)
+            );
+            
+            foreach ($iterator as $file) {
+                if (!$file->isFile()) {
+                    continue;
+                }
+                
+                $ext = strtolower($file->getExtension());
+                
+                // Only check JPG and PNG files
+                if (!in_array($ext, array('jpg', 'jpeg', 'png'))) {
+                    continue;
+                }
+                
+                // Check if WebP version exists in the same directory
+                $file_info = pathinfo($file->getPathname());
+                $webp_path = $file_info['dirname'] . '/' . $file_info['filename'] . '.webp';
+                
+                if (!file_exists($webp_path)) {
+                    $pending++;
+                    $total_size += $file->getSize();
+                }
+            }
+        } catch (Exception $e) {
+            // Error reading directory
+        }
+        
+        return array(
+            'count' => $pending,
+            'total_size' => $total_size
+        );
     }
     
     /**
@@ -405,15 +722,25 @@ class SNN_WebP_Image_Optimizer {
         }
         
         $file_info = pathinfo($file_path);
-        if (!isset($file_info['filename'])) {
+        if (!isset($file_info['filename']) || !isset($file_info['dirname'])) {
             return $image;
         }
         
-        $webp_path = $this->webp_dir . $file_info['filename'] . '.webp';
+        // Buscar WebP en la misma carpeta que el original (respeta estructura de carpetas personalizada)
+        $webp_path = $file_info['dirname'] . '/' . $file_info['filename'] . '.webp';
         
-        // Check if WebP version exists
+        // Check if WebP version exists in same directory
         if (file_exists($webp_path)) {
-            $webp_url = $this->upload_dir['baseurl'] . '/webp/' . $file_info['filename'] . '.webp';
+            // Construir URL relativa desde uploads
+            $upload_basedir = $this->upload_dir['basedir'];
+            $upload_baseurl = $this->upload_dir['baseurl'];
+            
+            // Obtener ruta relativa desde uploads
+            $relative_path = str_replace($upload_basedir, '', $webp_path);
+            $relative_path = ltrim($relative_path, '/\\');
+            
+            $webp_url = $upload_baseurl . '/' . $relative_path;
+            
             // Validar que la URL WebP es válida antes de reemplazar
             if (filter_var($webp_url, FILTER_VALIDATE_URL)) {
                 $image[0] = $webp_url;
@@ -882,6 +1209,17 @@ class SNN_WebP_Image_Optimizer {
                         break;
                     }
                 }
+                
+                // Check for banner/ad patterns in filename
+                if (!$is_critical) {
+                    $banner_patterns = array('banner', 'ad', 'advertisement', 'publicidad', 'ads');
+                    foreach ($banner_patterns as $pattern) {
+                        if (strpos($file_name_lower, $pattern) !== false) {
+                            $is_critical = true;
+                            break;
+                        }
+                    }
+                }
             }
         }
         
@@ -889,7 +1227,7 @@ class SNN_WebP_Image_Optimizer {
         if (!$is_critical) {
             $existing_class = $attr['class'] ?? '';
             if (!empty($existing_class)) {
-                $critical_classes = array('logo', 'site-logo', 'header-logo', 'brand', 'critical-image', 'no-lazy');
+                $critical_classes = array('logo', 'site-logo', 'header-logo', 'brand', 'critical-image', 'no-lazy', 'banner', 'ad', 'advertisement', 'publicidad', 'ads');
                 $class_array = explode(' ', $existing_class);
                 foreach ($class_array as $class) {
                     foreach ($critical_classes as $critical_class) {
@@ -898,6 +1236,25 @@ class SNN_WebP_Image_Optimizer {
                             break 2;
                         }
                     }
+                }
+            }
+        }
+        
+        // Check for banner/ad patterns in parent elements or context
+        if (!$is_critical) {
+            // Check if image is inside a banner/ad container by checking parent classes
+            // This is a best-effort check since we don't have DOM access here
+            $alt_text = $attr['alt'] ?? '';
+            $title_attr = $attr['title'] ?? '';
+            $aria_label = $attr['aria-label'] ?? '';
+            
+            $banner_keywords = array('banner', 'ad', 'advertisement', 'publicidad', 'ads', 'advertising');
+            $text_to_check = strtolower($alt_text . ' ' . $title_attr . ' ' . $aria_label);
+            
+            foreach ($banner_keywords as $keyword) {
+                if (stripos($text_to_check, $keyword) !== false) {
+                    $is_critical = true;
+                    break;
                 }
             }
         }
@@ -1005,14 +1362,15 @@ class SNN_WebP_Image_Optimizer {
         $dirname = $path_info['dirname'];
         
         // Try different WebP locations (same directory priority)
+        // Respetar estructura de carpetas personalizada (ej: fotoedicion)
         $possible_paths = array(
-            // In same directory as original (preferred)
+            // In same directory as original (preferred) - respeta estructura de carpetas
             ABSPATH . ltrim($dirname, '/') . '/' . $filename . '.webp',
             
-            // Direct WebP conversion
+            // Direct WebP conversion (reemplaza extensión en la misma ubicación)
             ABSPATH . ltrim(preg_replace('/\.(jpg|jpeg|png)$/i', '.webp', $request_uri), '/'),
             
-            // In uploads directory
+            // In uploads directory (misma estructura de carpetas)
             $this->upload_dir['basedir'] . ltrim($dirname, '/') . '/' . $filename . '.webp',
         );
         
@@ -1033,6 +1391,75 @@ class SNN_WebP_Image_Optimizer {
         if (preg_match('/\.(jpg|jpeg|png)$/i', $request_uri)) {
             $this->serve_webp_images();
         }
+    }
+    
+    /**
+     * Replace attachment image URL with WebP version
+     * Filtro para wp_get_attachment_image_url()
+     */
+    public function replace_attachment_image_url($url, $attachment_id, $size) {
+        // If Cloudflare is handling WebP, let it do its job
+        if (!($this->options['enable_webp'] ?? true) || $this->is_cloudflare_webp_enabled()) {
+            return $url;
+        }
+        
+        if (!$url || !$attachment_id) {
+            return $url;
+        }
+        
+        // Obtener ruta del archivo
+        $file_path = get_attached_file($attachment_id);
+        if (!$file_path || !file_exists($file_path)) {
+            return $url;
+        }
+        
+        $file_info = pathinfo($file_path);
+        if (!isset($file_info['filename']) || !isset($file_info['dirname'])) {
+            return $url;
+        }
+        
+        // Buscar WebP en la misma carpeta
+        $webp_path = $file_info['dirname'] . '/' . $file_info['filename'] . '.webp';
+        
+        if (file_exists($webp_path)) {
+            // Construir URL relativa desde uploads
+            $upload_basedir = $this->upload_dir['basedir'];
+            $upload_baseurl = $this->upload_dir['baseurl'];
+            
+            $relative_path = str_replace($upload_basedir, '', $webp_path);
+            $relative_path = ltrim($relative_path, '/\\');
+            
+            $webp_url = $upload_baseurl . '/' . $relative_path;
+            
+            if (filter_var($webp_url, FILTER_VALIDATE_URL)) {
+                return $webp_url;
+            }
+        }
+        
+        return $url;
+    }
+    
+    /**
+     * Replace post thumbnail URL with WebP version
+     * Filtro para the_post_thumbnail_url()
+     */
+    public function replace_post_thumbnail_url($url, $post_id, $size) {
+        // If Cloudflare is handling WebP, let it do its job
+        if (!($this->options['enable_webp'] ?? true) || $this->is_cloudflare_webp_enabled()) {
+            return $url;
+        }
+        
+        if (!$url || !$post_id) {
+            return $url;
+        }
+        
+        $thumbnail_id = get_post_thumbnail_id($post_id);
+        if (!$thumbnail_id) {
+            return $url;
+        }
+        
+        // Usar el filtro de attachment URL
+        return $this->replace_attachment_url_with_webp($url, $thumbnail_id);
     }
     
     /**
@@ -1080,33 +1507,92 @@ class SNN_WebP_Image_Optimizer {
     
     /**
      * Enhanced WebP URL detection (Same location)
+     * Respeta estructura de carpetas personalizada (ej: fotoedicion)
+     * Maneja URLs completas, relativas, y con estructura personalizada
      */
     private function get_webp_url($image_url) {
-        $upload_url = $this->upload_dir['baseurl'];
-        
-        // Check if image is from uploads directory
-        if (strpos($image_url, $upload_url) !== 0) {
+        if (empty($image_url)) {
             return false;
         }
         
-        $relative_path = str_replace($upload_url, '', $image_url);
+        $upload_url = $this->upload_dir['baseurl'];
+        $upload_basedir = $this->upload_dir['basedir'];
+        
+        // Normalizar URL - puede venir como URL completa o relativa
+        $image_url_clean = $image_url;
+        $is_full_url = false;
+        
+        // Si es URL completa, extraer ruta
+        if (preg_match('#^https?://[^/]+(/.+)$#', $image_url, $url_matches)) {
+            $image_url_clean = $url_matches[1];
+            $is_full_url = true;
+        }
+        
+        // Detectar si es de uploads (puede ser /wp-content/uploads/ o /fotoedicion/)
+        $relative_path = '';
+        $is_from_uploads = false;
+        
+        // Caso 1: Contiene upload_url base
+        if (strpos($image_url_clean, $upload_url) !== false) {
+            $relative_path = str_replace($upload_url, '', $image_url_clean);
+            $is_from_uploads = true;
+        }
+        // Caso 2: Contiene /wp-content/uploads/
+        elseif (preg_match('#/wp-content/uploads/(.+)$#', $image_url_clean, $matches)) {
+            $relative_path = $matches[1];
+            $is_from_uploads = true;
+        }
+        // Caso 3: Contiene /fotoedicion/ (estructura personalizada)
+        elseif (preg_match('#/(fotoedicion/.+)$#', $image_url_clean, $matches)) {
+            $relative_path = $matches[1];
+            $is_from_uploads = true;
+        }
+        // Caso 4: Empieza directamente con fotoedicion/ (sin slash inicial)
+        elseif (preg_match('#^fotoedicion/(.+)$#', $image_url_clean, $matches)) {
+            $relative_path = $matches[0]; // Incluye "fotoedicion/"
+            $is_from_uploads = true;
+        }
+        
+        if (!$is_from_uploads || empty($relative_path)) {
+            return false;
+        }
+        
+        $relative_path = ltrim($relative_path, '/\\');
         $file_info = pathinfo($relative_path);
         
-        // If image is already WebP, return it as is
+        // Si ya es WebP, verificar que existe y devolverla
         if (isset($file_info['extension']) && strtolower($file_info['extension']) === 'webp') {
-            // Verify the file exists
-            $current_path = $this->upload_dir['basedir'] . $relative_path;
+            $current_path = $upload_basedir . '/' . $relative_path;
             if (file_exists($current_path)) {
-                return $image_url;
+                return $image_url; // Ya es WebP, devolver tal cual
             }
             return false;
         }
         
-        // Check for WebP version in same location
-        $webp_path = $this->upload_dir['basedir'] . $file_info['dirname'] . '/' . $file_info['filename'] . '.webp';
+        // Construir ruta del WebP en la misma carpeta
+        if (!isset($file_info['dirname']) || !isset($file_info['filename'])) {
+            return false;
+        }
         
+        // Manejar caso especial: si dirname es "." (mismo directorio)
+        if ($file_info['dirname'] === '.' || $file_info['dirname'] === '') {
+            $webp_relative_path = $file_info['filename'] . '.webp';
+        } else {
+            $webp_relative_path = $file_info['dirname'] . '/' . $file_info['filename'] . '.webp';
+        }
+        
+        $webp_path = $upload_basedir . '/' . $webp_relative_path;
+        
+        // Verificar que el archivo WebP existe
         if (file_exists($webp_path)) {
-            return $upload_url . $file_info['dirname'] . '/' . $file_info['filename'] . '.webp';
+            // Construir URL WebP
+            if ($is_full_url) {
+                // URL completa, reemplazar extensión manteniendo estructura
+                return preg_replace('/\.(jpg|jpeg|png)$/i', '.webp', $image_url);
+            } else {
+                // Ruta relativa, construir URL completa
+                return $upload_url . '/' . $webp_relative_path;
+            }
         }
         
         return false;
@@ -1155,6 +1641,129 @@ class SNN_WebP_Image_Optimizer {
         return "data:image/svg+xml;base64," . base64_encode(
             '<svg width="' . $width . '" height="' . $height . '" viewBox="0 0 ' . $width . ' ' . $height . '" fill="none" xmlns="http://www.w3.org/2000/svg"><rect width="' . $width . '" height="' . $height . '" fill="#f3f4f6"/></svg>'
         );
+    }
+    
+    /**
+     * Start output buffer to intercept final HTML
+     * This catches URLs that Bricks Builder or other plugins might generate directly
+     */
+    public function start_output_buffer() {
+        // Solo en frontend, no en admin
+        if (is_admin() || wp_doing_ajax() || wp_doing_cron()) {
+            return;
+        }
+        
+        // Si Cloudflare está manejando WebP, no hacer nada
+        if ($this->is_cloudflare_webp_enabled()) {
+            return;
+        }
+        
+        // Si WebP está desactivado, no hacer nada
+        if (!($this->options['enable_webp'] ?? true)) {
+            return;
+        }
+        
+        ob_start(array($this, 'replace_urls_in_output'));
+    }
+    
+    /**
+     * End output buffer
+     */
+    public function end_output_buffer() {
+        if (ob_get_level() > 0) {
+            ob_end_flush();
+        }
+    }
+    
+    /**
+     * Replace image URLs in final HTML output
+     * This is the last line of defense for URLs that bypass WordPress filters
+     */
+    public function replace_urls_in_output($buffer) {
+        // Si Cloudflare está manejando WebP, no hacer nada
+        if ($this->is_cloudflare_webp_enabled()) {
+            return $buffer;
+        }
+        
+        // Si WebP está desactivado, no hacer nada
+        if (!($this->options['enable_webp'] ?? true)) {
+            return $buffer;
+        }
+        
+        if (empty($buffer)) {
+            return $buffer;
+        }
+        
+        // NO reemplazar URLs de imágenes que ya tienen placeholders (lazy loading)
+        // Esto evita conflictos con el sistema de lazy loading
+        // Las imágenes con data-src ya tienen su placeholder aplicado
+        // Solo reemplazar URLs en src, srcset, background-image que NO sean placeholders
+        
+        $upload_baseurl = $this->upload_dir['baseurl'];
+        
+        // Patrón para encontrar URLs de imágenes en el HTML
+        // Busca src, srcset, data-src, background-image, etc.
+        $patterns = array(
+            // src="url.jpg" o src='url.jpg'
+            '/(src=["\'])([^"\']*\.(jpg|jpeg|png))(["\'])/i',
+            // srcset="url.jpg 300w, url.jpg 600w"
+            '/(srcset=["\'])([^"\']*\.(jpg|jpeg|png)[^"\']*)(["\'])/i',
+            // data-src="url.jpg"
+            '/(data-src=["\'])([^"\']*\.(jpg|jpeg|png))(["\'])/i',
+            // background-image: url(url.jpg)
+            '/(background-image:\s*url\(["\']?)([^"\')]*\.(jpg|jpeg|png))(["\']?\))/i',
+        );
+        
+        foreach ($patterns as $pattern) {
+            $buffer = preg_replace_callback($pattern, function($matches) use ($upload_baseurl) {
+                $quote_before = $matches[1];
+                $image_url = $matches[2];
+                $quote_after = isset($matches[4]) ? $matches[4] : '';
+                
+                // NO reemplazar placeholders (data:image/svg+xml o data:image/svg)
+                if (strpos($image_url, 'data:image/svg') === 0) {
+                    return $matches[0]; // Es un placeholder, no reemplazar
+                }
+                
+                // Solo procesar URLs de uploads
+                if (strpos($image_url, $upload_baseurl) === false && strpos($image_url, '/fotoedicion/') === false) {
+                    return $matches[0]; // No es una imagen de uploads, devolver original
+                }
+                
+                // Obtener URL WebP
+                $webp_url = $this->get_webp_url($image_url);
+                
+                if ($webp_url && $webp_url !== $image_url) {
+                    // Reemplazar URL en srcset (puede tener múltiples URLs)
+                    if (strpos($image_url, ' ') !== false) {
+                        // Es un srcset, reemplazar todas las URLs
+                        $srcset_parts = explode(',', $image_url);
+                        $new_srcset = array();
+                        foreach ($srcset_parts as $part) {
+                            $part = trim($part);
+                            if (preg_match('/^(.+\.(jpg|jpeg|png))\s+(\d+w)$/i', $part, $srcset_match)) {
+                                $srcset_webp = $this->get_webp_url($srcset_match[1]);
+                                if ($srcset_webp) {
+                                    $new_srcset[] = $srcset_webp . ' ' . $srcset_match[3];
+                                } else {
+                                    $new_srcset[] = $part;
+                                }
+                            } else {
+                                $new_srcset[] = $part;
+                            }
+                        }
+                        return $quote_before . implode(', ', $new_srcset) . $quote_after;
+                    } else {
+                        // URL simple, reemplazar directamente
+                        return $quote_before . $webp_url . $quote_after;
+                    }
+                }
+                
+                return $matches[0]; // No hay WebP, devolver original
+            }, $buffer);
+        }
+        
+        return $buffer;
     }
     
     /**
@@ -1757,3 +2366,4 @@ class SNN_WebP_Image_Optimizer {
 
 // Initialize the WebP image optimizer
 new SNN_WebP_Image_Optimizer();
+
