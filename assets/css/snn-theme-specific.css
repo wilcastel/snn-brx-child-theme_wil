@@ -57,10 +57,40 @@
    OVERRIDES MÍNIMOS PARA CORE WEB VITALS
    ======================================== */
 
+/* ========================================
+   PREVENIR LAYOUT SHIFTS (CLS)
+   ======================================== */
+
 /* Asegurar que las imágenes no causen CLS */
 img {
     max-width: 100%;
     height: auto;
+}
+
+/* Imágenes responsivas con aspect-ratio */
+img.snn-responsive-image,
+img.size-large,
+img.size-medium,
+img.size-thumbnail {
+    width: 100%;
+    height: auto;
+    /* aspect-ratio se agregará vía atributo style si está disponible */
+}
+
+/* Grid de imágenes de Bricks - Reservar espacio para prevenir CLS */
+#brxe-boqtic.brxe-div,
+.snn-image-grid,
+.brxe-div.flex.flex-wrap {
+    min-height: 400px; /* Ajustar según contenido esperado */
+    /* Fallback para navegadores antiguos que no soportan aspect-ratio */
+}
+
+/* Contenedores dinámicos - Reservar espacio mínimo */
+.snn-content-placeholder,
+.snn-dynamic-content {
+    min-height: 200px;
+    background: #f3f4f6;
+    border-radius: 4px;
 }
 
 /* Mejorar renderizado de fuentes */

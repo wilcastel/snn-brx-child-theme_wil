@@ -321,8 +321,6 @@ class SNN_Assets_Optimization {
      * Optimized for Core Web Vitals:
      * - Preconnect for critical resources (fonts) - does DNS + TCP + TLS
      * - DNS prefetch only for non-critical resources - lighter weight
-     * 
-     * Note: DNS prefetch is only added if not disabled in Security & Optimization settings
      */
     public function add_resource_hints() {
         // Preconnect to critical external resources (fonts)
@@ -337,30 +335,17 @@ class SNN_Assets_Optimization {
             echo '<link rel="preconnect" href="https://' . esc_attr($domain) . '" crossorigin>' . "\n";
         }
         
-        // Check if DNS prefetch is disabled in Security & Optimization settings
-        // head-optimization.php removes wp_resource_hints, but we should respect that
-        // by not adding DNS prefetch if it's been explicitly disabled
-        $security_options = get_option('snn_security_optimization_options', array());
-        
-        // DNS prefetch is removed by default in head-optimization.php
-        // Only add DNS prefetch if explicitly enabled (for now, we'll respect the removal)
         // DNS prefetch for non-critical external domains only
         // Only use dns-prefetch for resources that don't need immediate connection
         // This reduces HTML size while still providing DNS resolution benefits
-        // 
-        // NOTE: DNS prefetch is disabled by default via head-optimization.php
-        // If you need DNS prefetch, you should remove the removal in head-optimization.php
-        // or add a configuration option to control this behavior
-        //
-        // For now, we'll skip DNS prefetch to avoid conflicts with head-optimization.php
-        // $non_critical_domains = array(
-        //     'cdnjs.cloudflare.com',
-        //     'unpkg.com'
-        // );
-        //
-        // foreach ($non_critical_domains as $domain) {
-        //     echo '<link rel="dns-prefetch" href="//' . esc_attr($domain) . '">' . "\n";
-        // }
+        $non_critical_domains = array(
+            'cdnjs.cloudflare.com',
+            'unpkg.com'
+        );
+        
+        foreach ($non_critical_domains as $domain) {
+            echo '<link rel="dns-prefetch" href="//' . esc_attr($domain) . '">' . "\n";
+        }
     }
     
     /**
@@ -505,7 +490,6 @@ class SNN_Assets_Optimization {
     
     /**
      * Add wp object safety check to prevent undefined errors
-     * Optimized and minified version to reduce head size
      */
     public function add_wp_safety_check() {
         // Solo en frontend, no en admin
@@ -513,9 +497,81 @@ class SNN_Assets_Optimization {
             return;
         }
         
-        // Minified version to reduce HTML size
-        // Creates minimal wp object to prevent undefined errors from plugins
-        echo '<script>!function(){var e=function(){var e=Array.prototype.slice.call(arguments,1),t=String.fromCharCode(37);return arguments[0].replace(/%[sdj%]/g,function(n){return n===t+t?t:(n=e.shift(),void 0===n||null===n?"":n==="%j"?JSON.stringify(n):String(n))})},t={setLocaleData:function(){},__:function(e){return e},_x:function(e){return e},_n:function(e,t,n){return 1===n?e:t},sprintf:e};"undefined"===typeof wp?window.wp={media:function(){return{on:function(){return this},open:function(){return this}}},data:null,codeEditor:null,i18n:t}:wp.i18n||(wp.i18n=t)}();</script>';
+        ?>
+        <script>
+        // Protección global para prevenir errores de wp no definido
+        (function() {
+            if (typeof wp === "undefined") {
+                window.wp = {
+                    media: function() {
+                        console.warn("wp.media no está disponible en el frontend");
+                        return {
+                            on: function() { return this; },
+                            open: function() { return this; }
+                        };
+                    },
+                    data: null,
+                    codeEditor: null,
+                    i18n: {
+                        setLocaleData: function() {
+                            // No-op: prevenir errores cuando plugins intentan usar i18n en frontend
+                            return;
+                        },
+                        __: function(text) {
+                            return text;
+                        },
+                        _x: function(text, context) {
+                            return text;
+                        },
+                        _n: function(single, plural, number) {
+                            return number === 1 ? single : plural;
+                        },
+                        sprintf: function(format) {
+                            var args = Array.prototype.slice.call(arguments, 1);
+                            var percentChar = String.fromCharCode(37);
+                            return format.replace(/%[sdj%]/g, function(match) {
+                                if (match === percentChar + percentChar) return percentChar;
+                                var arg = args.shift();
+                                if (arg === undefined || arg === null) return '';
+                                if (match === '%j') return JSON.stringify(arg);
+                                return String(arg);
+                            });
+                        }
+                    }
+                };
+            } else {
+                // Si wp existe pero i18n no, agregarlo
+                if (!wp.i18n) {
+                    wp.i18n = {
+                        setLocaleData: function() {
+                            return;
+                        },
+                        __: function(text) {
+                            return text;
+                        },
+                        _x: function(text, context) {
+                            return text;
+                        },
+                        _n: function(single, plural, number) {
+                            return number === 1 ? single : plural;
+                        },
+                        sprintf: function(format) {
+                            var args = Array.prototype.slice.call(arguments, 1);
+                            var percentChar = String.fromCharCode(37);
+                            return format.replace(/%[sdj%]/g, function(match) {
+                                if (match === percentChar + percentChar) return percentChar;
+                                var arg = args.shift();
+                                if (arg === undefined || arg === null) return '';
+                                if (match === '%j') return JSON.stringify(arg);
+                                return String(arg);
+                            });
+                        }
+                    };
+                }
+            }
+        })();
+        </script>
+        <?php
     }
     
     /**
@@ -555,16 +611,9 @@ class SNN_Assets_Optimization {
             // Remove any existing query parameters that might trigger Cloudflare optimization
             // and add a parameter to prevent optimization
             $url_parts = parse_url($src);
-            // Verificar que parse_url devolvió un array válido con scheme y host
-            if (is_array($url_parts) && isset($url_parts['scheme']) && isset($url_parts['host'])) {
-                $src = $url_parts['scheme'] . '://' . $url_parts['host'] . 
-                       (isset($url_parts['port']) ? ':' . $url_parts['port'] : '') .
-                       (isset($url_parts['path']) ? $url_parts['path'] : '');
-            } else {
-                // Si parse_url falló o la URL es relativa, usar la URL original
-                // Esto puede pasar con URLs relativas o mal formadas
-                return $src;
-            }
+            $src = $url_parts['scheme'] . '://' . $url_parts['host'] . 
+                   (isset($url_parts['port']) ? ':' . $url_parts['port'] : '') .
+                   $url_parts['path'];
             
             // Keep version parameter if it exists (important for cache busting)
             if (isset($url_parts['query'])) {

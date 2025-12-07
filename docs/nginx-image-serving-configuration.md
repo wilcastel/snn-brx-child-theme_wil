@@ -274,3 +274,4 @@ location ~* \.(jpg|jpeg|png|gif|webp|svg|ico)$ {
 
 Esta configuración es **complementaria** a todas las optimizaciones del theme y mejora significativamente el rendimiento sin afectar ninguna funcionalidad existente.
 
+

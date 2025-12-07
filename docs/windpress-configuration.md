@@ -20,14 +20,34 @@ Configurar WindPress para que Tailwind v4 tenga la especificidad correcta sobre 
 /* ========================================
    DECLARACIÓN DE CAPAS CSS
    ======================================== */
-@layer reset, wordpress, bricks, theme, base, layouts, components, utilities, custom;
+/* 
+ * Estructura simplificada según Flowtitude:
+ * https://flowtitude.com/layer-css-wordpress-tailwind/
+ * 
+ * Orden de prioridad (de menor a mayor):
+ * - base: reset/preflight, tipografía global
+ * - components: patrones reutilizables
+ * - utilities: helpers específicos
+ * - custom: overrides para terceros (Bricks, Gutenberg, plugins)
+ * 
+ * A igualdad de especificidad, gana la capa declarada más tarde.
+ * Por lo tanto, 'custom' siempre gana sobre las demás.
+ */
+@layer base, components, utilities, custom;
 
 /* ========================================
-   IMPORTACIÓN DE TAILWIND CSS EN CAPAS
+   IMPORTACIÓN DE TAILWIND CSS
    ======================================== */
-@import "tailwindcss/theme.css" layer(theme) theme(static);
-@import "tailwindcss/preflight.css" layer(base);
-@import "tailwindcss/utilities.css" layer(utilities);
+/* Opción A: Import único (recomendada) */
+@import "tailwindcss";
+
+/* 
+ * Opción B: Control por capas (avanzada)
+ * Descomenta si necesitas control fino:
+ * 
+ * @import "tailwindcss/preflight" layer(base);
+ * @import "tailwindcss/utilities" layer(utilities);
+ */
 
 /* ========================================
    IMPORTACIÓN DE ARCHIVOS LOCALES

@@ -31,7 +31,6 @@ class SNN_Head_Optimization {
         $this->optimize_css_loading();
         $this->optimize_scripts();
         $this->optimize_windpress();
-        $this->remove_duplicate_meta_tags();
     }
     
     /**
@@ -195,128 +194,6 @@ class SNN_Head_Optimization {
         }
         
         return $css;
-    }
-    
-    /**
-     * Remove duplicate meta tags from HTML output
-     * This catches duplicates from Bricks Builder scripts, plugins, or custom code
-     */
-    private function remove_duplicate_meta_tags() {
-        // Only run on frontend, not in admin
-        if (is_admin()) {
-            return;
-        }
-        
-        // Use output buffering to clean HTML before sending to browser
-        add_action('template_redirect', function() {
-            ob_start(array($this, 'clean_duplicate_meta_tags'));
-        }, 1);
-    }
-    
-    /**
-     * Clean duplicate meta tags from HTML buffer
-     * Removes duplicate meta tags from head section, keeping only the first occurrence
-     * This catches duplicates from Bricks Builder scripts, plugins, or custom code
-     * 
-     * @param string $html The HTML content
-     * @return string Cleaned HTML without duplicate meta tags
-     */
-    public function clean_duplicate_meta_tags($html) {
-        // Only process if we have HTML content
-        if (empty($html) || strpos($html, '<head') === false) {
-            return $html;
-        }
-        
-        // Extract head section
-        if (preg_match('/<head[^>]*>(.*?)<\/head>/is', $html, $head_matches)) {
-            $head_content = $head_matches[1];
-            $head_full_match = $head_matches[0];
-            
-            // Track which meta tags we've seen (by unique identifier)
-            $seen_tags = array();
-            
-            // Find all meta tags and canonical links in head
-            // Match meta tags with name or property attributes
-            preg_match_all('/(<meta\s+(?:name|property)=["\']([^"\']+)["\'][^>]*>)/i', $head_content, $meta_matches, PREG_OFFSET_CAPTURE);
-            preg_match_all('/(<link\s+rel=["\']canonical["\'][^>]*>)/i', $head_content, $canonical_matches, PREG_OFFSET_CAPTURE);
-            
-            // Combine all matches with their positions
-            $all_tags = array();
-            
-            // Add meta tags
-            if (!empty($meta_matches[0])) {
-                foreach ($meta_matches[0] as $index => $match) {
-                    $tag_content = $match[0];
-                    $tag_offset = $match[1];
-                    $tag_attr_value = isset($meta_matches[2][$index][0]) ? $meta_matches[2][$index][0] : '';
-                    
-                    // Create unique identifier based on attribute type and value
-                    if (preg_match('/\s+name=["\']([^"\']+)["\']/i', $tag_content, $name_match)) {
-                        $identifier = 'name-' . strtolower($name_match[1]);
-                    } elseif (preg_match('/\s+property=["\']([^"\']+)["\']/i', $tag_content, $prop_match)) {
-                        $identifier = 'property-' . strtolower($prop_match[1]);
-                    } else {
-                        $identifier = 'meta-' . md5($tag_content);
-                    }
-                    
-                    $all_tags[] = array(
-                        'content' => $tag_content,
-                        'offset' => $tag_offset,
-                        'identifier' => $identifier,
-                        'length' => strlen($tag_content)
-                    );
-                }
-            }
-            
-            // Add canonical links
-            if (!empty($canonical_matches[0])) {
-                foreach ($canonical_matches[0] as $match) {
-                    $tag_content = $match[0];
-                    $tag_offset = $match[1];
-                    
-                    $all_tags[] = array(
-                        'content' => $tag_content,
-                        'offset' => $tag_offset,
-                        'identifier' => 'canonical',
-                        'length' => strlen($tag_content)
-                    );
-                }
-            }
-            
-            // Sort by offset (reverse order) so we can remove from end to beginning
-            usort($all_tags, function($a, $b) {
-                return $b['offset'] - $a['offset'];
-            });
-            
-            // Remove duplicates (keep first occurrence, remove subsequent ones)
-            foreach ($all_tags as $tag) {
-                if (isset($seen_tags[$tag['identifier']])) {
-                    // This is a duplicate - remove it
-                    // Remove the tag and any trailing whitespace/newline
-                    $remove_length = $tag['length'];
-                    $after_tag = substr($head_content, $tag['offset'] + $tag['length'], 2);
-                    if (preg_match('/^\s+/', $after_tag, $ws_match)) {
-                        $remove_length += strlen($ws_match[0]);
-                    }
-                    
-                    $head_content = substr_replace($head_content, '', $tag['offset'], $remove_length);
-                } else {
-                    // First occurrence - mark as seen
-                    $seen_tags[$tag['identifier']] = true;
-                }
-            }
-            
-            // Reconstruct head section
-            $head_start = preg_match('/<head([^>]*)>/i', $head_full_match, $attr_match) 
-                ? '<head' . $attr_match[1] . '>' 
-                : '<head>';
-            $new_head = $head_start . $head_content . '</head>';
-            
-            // Replace original head with cleaned version
-            $html = str_replace($head_full_match, $new_head, $html);
-        }
-        
-        return $html;
     }
 }
 

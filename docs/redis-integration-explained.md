@@ -577,3 +577,4 @@ Base de datos en memoria ultra rápida que persiste datos entre requests.
 - No tienes múltiples servidores
 - No tienes presupuesto para Redis managed
 
+

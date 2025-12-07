@@ -75,12 +75,13 @@ require_once SNN_PATH . 'includes/assets-optimization-admin.php';
 // Assets Optimization Settings Page
 require_once SNN_PATH . 'includes/assets-optimization-settings.php';
 
-// Image Serving Verification (for debugging and optimization)
-// Descomentar solo cuando necesites verificar si las imágenes se sirven directamente
-// require_once SNN_PATH . 'includes/image-serving-verification.php';
-
-// Legacy security files - Funcionalidad movida a security-optimization.php
-// Estos archivos ya no son necesarios, toda la funcionalidad está centralizada
+// Legacy security files (kept for compatibility - functionality moved to security-optimization.php)
+// require_once SNN_PATH . 'includes/security-page.php';
+// require_once SNN_PATH . 'includes/remove-wp-version.php';
+// require_once SNN_PATH . 'includes/disable-xmlrpc.php';
+// require_once SNN_PATH . 'includes/disable-file-editing.php';
+// require_once SNN_PATH . 'includes/remove-rss.php';
+// require_once SNN_PATH . 'includes/disable-wp-json-if-not-logged-in.php';
 
 require_once SNN_PATH . 'includes/post-types-settings.php';
 require_once SNN_PATH . 'includes/custom-field-settings.php';
@@ -95,7 +96,8 @@ require_once SNN_PATH . 'includes/301-redirect.php';
 require_once SNN_PATH . 'includes/smtp-settings.php';
 require_once SNN_PATH . 'includes/mail-logging.php';
 require_once SNN_PATH . 'includes/media-settings.php';
-// disable-emojis.php y disable-gravatar.php - Funcionalidad movida a security-optimization.php
+// require_once SNN_PATH . 'includes/disable-emojis.php';  // Moved to security-optimization.php
+// require_once SNN_PATH . 'includes/disable-gravatar.php'; // Moved to security-optimization.php
 require_once SNN_PATH . 'includes/editor-settings-bricks.php'; 
 require_once SNN_PATH . 'includes/editor-settings-panel-bricks.php';
 require_once SNN_PATH . 'includes/role-manager.php';

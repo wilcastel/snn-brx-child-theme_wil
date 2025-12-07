@@ -21,7 +21,7 @@ class SNN_Image_Auto_Optimizer {
     private $max_file_size_mb = 1; // 1MB default
     private $max_width = 2560; // Desktop max
     private $max_height = 2560;
-    private $compression_quality = 85;
+    private $compression_quality = 75; // Reducido de 85 a 75 para mejor compresión (recomendado para web)
     
     public function __construct() {
         $this->options = get_option('snn_image_optimizer_options', array());
@@ -30,7 +30,7 @@ class SNN_Image_Auto_Optimizer {
         $this->max_file_size_mb = $this->options['max_file_size_mb'] ?? 1;
         $this->max_width = $this->options['max_width'] ?? 2560;
         $this->max_height = $this->options['max_height'] ?? 2560;
-        $this->compression_quality = $this->options['compression_quality'] ?? 85;
+        $this->compression_quality = $this->options['compression_quality'] ?? 75; // Default 75 para mejor compresión (recomendado para web)
         
         $this->init_hooks();
         $this->register_image_sizes();
@@ -58,19 +58,27 @@ class SNN_Image_Auto_Optimizer {
     
     /**
      * Register custom image sizes for better responsive handling
+     * Más tamaños = mejor srcset = imágenes más pequeñas según dispositivo
      */
     private function register_image_sizes() {
         // Standard WordPress sizes (already exist, but ensure they're optimal)
         // Add custom sizes for desktop/mobile breakpoints
         
-        // Extra sizes for better srcset
-        add_image_size('snn_desktop', 1920, 1080, false); // Desktop standard
-        add_image_size('snn_desktop_large', 2560, 1440, false); // 2K screens
-        add_image_size('snn_tablet', 1024, 768, false); // Tablet
-        add_image_size('snn_mobile_large', 768, 1024, false); // Mobile large (vertical)
+        // Tamaños móviles (para mejor srcset)
+        add_image_size('snn_mobile_small', 320, 240, false); // Móvil pequeño (320px)
+        add_image_size('snn_mobile', 480, 360, false); // Móvil estándar (480px)
+        add_image_size('snn_mobile_large', 768, 576, false); // Móvil grande (768px)
         
-        // These sizes work with both vertical and horizontal images
-        // WordPress will crop proportionally
+        // Tamaños tablet
+        add_image_size('snn_tablet', 1024, 768, false); // Tablet (1024px)
+        
+        // Tamaños desktop
+        add_image_size('snn_desktop_small', 1280, 720, false); // Desktop pequeño (1280px)
+        add_image_size('snn_desktop', 1920, 1080, false); // Desktop estándar (1920px)
+        add_image_size('snn_desktop_large', 2560, 1440, false); // 2K screens (2560px)
+        
+        // Estos tamaños funcionan con imágenes verticales y horizontales
+        // WordPress mantendrá la proporción (false = no crop)
     }
     
     /**
@@ -431,9 +439,9 @@ class SNN_Image_Auto_Optimizer {
     }
     
     public function compression_quality_callback() {
-        $value = $this->options['compression_quality'] ?? 85;
+        $value = $this->options['compression_quality'] ?? 75;
         echo '<input type="number" name="snn_image_optimizer_options[compression_quality]" value="' . esc_attr($value) . '" min="60" max="100" step="1" />';
-        echo '<p class="description">' . __('JPEG compression quality (60-100). Lower = smaller files but lower quality. Recommended: 85.', 'snn') . '</p>';
+        echo '<p class="description">' . __('JPEG compression quality (60-100). Lower = smaller files but lower quality. Recommended: 75 para web (balance óptimo calidad/tamaño).', 'snn') . '</p>';
     }
     
     /**
@@ -445,7 +453,7 @@ class SNN_Image_Auto_Optimizer {
         $sanitized['max_file_size_mb'] = floatval($input['max_file_size_mb'] ?? 1);
         $sanitized['max_width'] = intval($input['max_width'] ?? 2560);
         $sanitized['max_height'] = intval($input['max_height'] ?? 2560);
-        $sanitized['compression_quality'] = intval($input['compression_quality'] ?? 85);
+        $sanitized['compression_quality'] = intval($input['compression_quality'] ?? 75);
         
         // Validate ranges
         if ($sanitized['max_file_size_mb'] < 0.5) $sanitized['max_file_size_mb'] = 0.5;

@@ -1,7 +1,7 @@
 # Integración WindPress + Tailwind v4 + @layer
 
 ## Contexto
-El tema SNN-BRX-WIL es hijo de Bricks Builder y utiliza WindPress para integrar Tailwind v4. Según [Flowtitude](https://flowtitude.com/layer-css-wordpress-tailwind), es crucial implementar una arquitectura de capas CSS para evitar colisiones en el constructor.
+El tema SNN-BRX-WIL es hijo de Bricks Builder y utiliza WindPress para integrar Tailwind v4. Según [Flowtitude](https://flowtitude.com/layer-css-wordpress-tailwind/), es crucial implementar una arquitectura de capas CSS para evitar colisiones en el constructor y **garantizar que WindPress/Tailwind siempre tenga prioridad sobre Bricks**.
 
 ## Problema Actual
 - Estilos de WordPress/Gutenberg pueden "ganar" sobre nuestros estilos
@@ -12,9 +12,20 @@ El tema SNN-BRX-WIL es hijo de Bricks Builder y utiliza WindPress para integrar 
 ## Solución: Arquitectura de Capas
 
 ### Estructura de Capas Recomendada
+
+**Menos es más.** Mantener pocas capas con responsabilidades claras:
+
 ```css
 @layer base, components, utilities, custom;
 ```
+
+**Orden de prioridad** (de menor a mayor):
+1. **`base`** → reset/preflight, tipografía global, normalizaciones
+2. **`components`** → patrones reutilizables (.btn, .card, .input…)
+3. **`utilities`** → pequeños helpers cuando no exista la utilidad Tailwind
+4. **`custom`** → último recurso para convivir con CSS de terceros (Bricks, Gutenberg, plugins)
+
+**Regla clave**: A igualdad de especificidad, **gana la capa declarada más tarde**. Por lo tanto, `custom` siempre gana sobre las demás, garantizando que WindPress/Tailwind tenga prioridad sobre Bricks.
 
 ### Implementación con WindPress
 
@@ -106,8 +117,24 @@ El tema SNN-BRX-WIL es hijo de Bricks Builder y utiliza WindPress para integrar 
 }
 
 @layer custom {
-  /* Solo para casos puntuales con terceros */
-  /* Documentar cada override */
+  /* 
+   * SOLO para casos puntuales con terceros (Bricks, Gutenberg, plugins)
+   * Documentar cada override explicando POR QUÉ existe
+   * 
+   * Esta es la última capa, por lo que siempre gana sobre las demás
+   * a igualdad de especificidad, garantizando que Tailwind tenga
+   * prioridad sobre Bricks Builder.
+   */
+  
+  /* Overrides para Bricks Builder */
+  .brxe-button {
+    @apply inline-flex items-center justify-center px-4 py-2 rounded font-medium;
+  }
+  
+  /* Overrides para Gutenberg */
+  .wp-block-button__link {
+    @apply bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700;
+  }
 }
 ```
 

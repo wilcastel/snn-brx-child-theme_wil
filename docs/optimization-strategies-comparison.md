@@ -208,3 +208,4 @@ CREATE TABLE `wp_snn_home_cache` (
 - Tienes capacidad de mantenimiento
 - Las consultas son muy específicas y repetitivas
 
+

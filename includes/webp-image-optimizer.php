@@ -27,7 +27,7 @@ class SNN_WebP_Image_Optimizer {
         $this->options = get_option('snn_webp_options', array());
         $this->upload_dir = wp_upload_dir();
         $this->webp_dir = $this->upload_dir['basedir'] . '/webp/';
-        $this->quality = $this->options['webp_quality'] ?? 85;
+        $this->quality = $this->options['webp_quality'] ?? 80; // Default 80 (WebP comprime mejor que JPEG, puede usar calidad ligeramente mayor)
         $this->max_width = $this->options['max_width'] ?? 1920;
         $this->max_height = $this->options['max_height'] ?? 1080;
         
@@ -61,8 +61,9 @@ class SNN_WebP_Image_Optimizer {
         
         // Output buffer para interceptar HTML final y reemplazar URLs (última línea de defensa)
         // Esto captura URLs que Bricks Builder u otros plugins puedan generar directamente
+        // Usar init con prioridad alta para asegurar que se ejecute antes que otros output buffers
         if (!is_admin()) {
-            add_action('template_redirect', array($this, 'start_output_buffer'), 1);
+            add_action('init', array($this, 'start_output_buffer'), 9999);
             add_action('shutdown', array($this, 'end_output_buffer'), 999);
         }
         
@@ -650,10 +651,12 @@ class SNN_WebP_Image_Optimizer {
             // Update file permissions
             chmod($webp_path, 0644);
             
-            // Remove original file to save space (always remove original)
-            if (file_exists($file_path)) {
-                unlink($file_path);
-            }
+            // NO eliminar el original - WordPress lo necesita para:
+            // 1. Generar tamaños (thumbnail, medium, large, etc.)
+            // 2. Regenerar tamaños si es necesario
+            // 3. Compatibilidad con plugins que necesitan el original
+            // 4. Fallback si WebP no se puede servir
+            // El sistema usará WebP para servir, pero mantendrá el original como respaldo
             
             return $webp_path;
         }
@@ -1726,7 +1729,27 @@ class SNN_WebP_Image_Optimizer {
                 }
                 
                 // Solo procesar URLs de uploads
-                if (strpos($image_url, $upload_baseurl) === false && strpos($image_url, '/fotoedicion/') === false) {
+                // Verificar múltiples formas de detectar URLs de uploads
+                $is_upload_url = false;
+                
+                // Caso 1: Contiene upload_baseurl
+                if (strpos($image_url, $upload_baseurl) !== false) {
+                    $is_upload_url = true;
+                }
+                // Caso 2: Contiene /wp-content/uploads/
+                elseif (strpos($image_url, '/wp-content/uploads/') !== false) {
+                    $is_upload_url = true;
+                }
+                // Caso 3: Contiene /fotoedicion/ (estructura personalizada)
+                elseif (strpos($image_url, '/fotoedicion/') !== false) {
+                    $is_upload_url = true;
+                }
+                // Caso 4: Es una ruta relativa que empieza con uploads o fotoedicion
+                elseif (preg_match('#^(/)?(wp-content/uploads/|fotoedicion/)#', $image_url)) {
+                    $is_upload_url = true;
+                }
+                
+                if (!$is_upload_url) {
                     return $matches[0]; // No es una imagen de uploads, devolver original
                 }
                 
@@ -1761,6 +1784,82 @@ class SNN_WebP_Image_Optimizer {
                 
                 return $matches[0]; // No hay WebP, devolver original
             }, $buffer);
+        }
+        
+        // Agregar dimensiones a imágenes que no las tienen (prevenir CLS)
+        $buffer = $this->add_image_dimensions_to_output($buffer);
+        
+        return $buffer;
+    }
+    
+    /**
+     * Agregar dimensiones (width, height, aspect-ratio) a imágenes sin ellas
+     * Esto previene layout shifts (CLS)
+     */
+    private function add_image_dimensions_to_output($buffer) {
+        if (empty($buffer)) {
+            return $buffer;
+        }
+        
+        // Buscar todas las imágenes sin width o height
+        preg_match_all('/<img([^>]+)>/i', $buffer, $matches, PREG_SET_ORDER);
+        
+        foreach ($matches as $match) {
+            $full_tag = $match[0];
+            $attributes = $match[1];
+            
+            // Si ya tiene width y height, saltar
+            if (preg_match('/\s(width|height)=["\']/', $attributes)) {
+                continue;
+            }
+            
+            // Extraer src
+            if (!preg_match('/src=["\']([^"\']+)["\']/', $attributes, $src_match)) {
+                continue;
+            }
+            
+            $image_url = $src_match[1];
+            
+            // Obtener attachment ID desde URL
+            $attachment_id = attachment_url_to_postid($image_url);
+            if (!$attachment_id) {
+                continue;
+            }
+            
+            // Obtener metadata
+            $metadata = wp_get_attachment_metadata($attachment_id);
+            if (!$metadata || !isset($metadata['width']) || !isset($metadata['height'])) {
+                continue;
+            }
+            
+            $width = $metadata['width'];
+            $height = $metadata['height'];
+            
+            // Calcular aspect-ratio
+            $aspect_ratio = $width / $height;
+            
+            // Agregar width, height y aspect-ratio
+            $new_attributes = $attributes;
+            
+            // Agregar width y height
+            $new_attributes .= ' width="' . esc_attr($width) . '"';
+            $new_attributes .= ' height="' . esc_attr($height) . '"';
+            
+            // Agregar aspect-ratio al style si no existe
+            if (!preg_match('/style=["\'][^"\']*aspect-ratio[^"\']*["\']/', $new_attributes)) {
+                // Extraer style existente o crear uno nuevo
+                if (preg_match('/style=["\']([^"\']*)["\']/', $new_attributes, $style_match)) {
+                    $existing_style = $style_match[1];
+                    $new_style = $existing_style . (empty($existing_style) ? '' : '; ') . 'aspect-ratio: ' . $aspect_ratio . ';';
+                    $new_attributes = preg_replace('/style=["\'][^"\']*["\']/', 'style="' . esc_attr($new_style) . '"', $new_attributes);
+                } else {
+                    $new_attributes .= ' style="aspect-ratio: ' . esc_attr($aspect_ratio) . ';"';
+                }
+            }
+            
+            // Reemplazar tag original
+            $new_tag = '<img' . $new_attributes . '>';
+            $buffer = str_replace($full_tag, $new_tag, $buffer);
         }
         
         return $buffer;
@@ -1920,8 +2019,9 @@ class SNN_WebP_Image_Optimizer {
     }
     
     public function webp_quality_callback() {
-        $quality = $this->options['webp_quality'] ?? 85;
+        $quality = $this->options['webp_quality'] ?? 80;
         echo '<input type="number" name="snn_webp_options[webp_quality]" value="' . esc_attr($quality) . '" min="1" max="100" />';
+        echo '<p class="description">' . __('Calidad WebP (1-100). WebP comprime mejor que JPEG, por lo que 80 es equivalente a ~75 en JPEG. Recomendado: 80.', 'snn') . '</p>';
         echo '<p class="description">' . __('WebP quality (1-100). Higher values mean better quality but larger file sizes.', 'snn') . '</p>';
     }
     
@@ -1986,7 +2086,7 @@ class SNN_WebP_Image_Optimizer {
         $sanitized = array();
         
         $sanitized['enable_webp'] = isset($input['enable_webp']) ? 1 : 0;
-        $sanitized['webp_quality'] = intval($input['webp_quality'] ?? 85);
+        $sanitized['webp_quality'] = intval($input['webp_quality'] ?? 80);
         $sanitized['max_width'] = intval($input['max_width'] ?? 1920);
         $sanitized['max_height'] = intval($input['max_height'] ?? 1080);
         $sanitized['enable_preload'] = isset($input['enable_preload']) ? 1 : 0;

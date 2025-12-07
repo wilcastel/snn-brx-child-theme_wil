@@ -258,3 +258,4 @@ En **WordPress Admin** → **SNN Settings** → **WebP Image Optimization**:
 
 El sistema está diseñado para funcionar de forma transparente: simplemente convierte las imágenes y el HTML automáticamente usa las versiones WebP.
 
+
