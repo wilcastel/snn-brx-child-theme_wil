@@ -602,6 +602,26 @@ class SNN_WebP_Image_Optimizer {
             return false;
         }
         
+        // Fallback: If file doesn't exist, try swapping extensions (jpg <-> jpeg)
+        // This handles cases where DB has .jpeg but file is .jpg (or vice versa)
+        if (!file_exists($file_path)) {
+            $info = pathinfo($file_path);
+            if (isset($info['extension'])) {
+                $ext = strtolower($info['extension']);
+                $alt_path = '';
+                
+                if ($ext === 'jpg') {
+                    $alt_path = preg_replace('/\.jpg$/i', '.jpeg', $file_path);
+                } elseif ($ext === 'jpeg') {
+                    $alt_path = preg_replace('/\.jpeg$/i', '.jpg', $file_path);
+                }
+                
+                if ($alt_path && file_exists($alt_path)) {
+                    $file_path = $alt_path;
+                }
+            }
+        }
+        
         // Skip if file is already WebP
         $file_info = pathinfo($file_path);
         if (isset($file_info['extension']) && strtolower($file_info['extension']) === 'webp') {
@@ -1586,6 +1606,26 @@ class SNN_WebP_Image_Optimizer {
         
         $webp_path = $upload_basedir . '/' . $webp_relative_path;
         
+        // Fix: Check for path duplication if file doesn't exist
+        // This handles cases where basedir ends with 'fotoedicion' and relative path also starts with 'fotoedicion'
+        if (!file_exists($webp_path)) {
+            $basedir_name = basename($upload_basedir);
+            $parts = explode('/', $webp_relative_path);
+            
+            if (count($parts) > 1 && $parts[0] === $basedir_name) {
+                // Try removing the duplicated segment
+                $alt_parts = $parts;
+                array_shift($alt_parts);
+                $alt_relative_path = implode('/', $alt_parts);
+                $alt_path = $upload_basedir . '/' . $alt_relative_path;
+                
+                if (file_exists($alt_path)) {
+                    $webp_path = $alt_path;
+                    $webp_relative_path = $alt_relative_path;
+                }
+            }
+        }
+        
         // Verificar que el archivo WebP existe
         if (file_exists($webp_path)) {
             // Construir URL WebP
@@ -1750,7 +1790,7 @@ class SNN_WebP_Image_Optimizer {
                 }
                 
                 if (!$is_upload_url) {
-                    return $matches[0]; // No es una imagen de uploads, devolver original
+                    return $matches[0];
                 }
                 
                 // Obtener URL WebP
