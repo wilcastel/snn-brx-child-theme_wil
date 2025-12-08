@@ -849,11 +849,12 @@ class SNN_WebP_Image_Optimizer {
             
             // 3. Add fetchpriority attribute
             if (!preg_match('/\sfetchpriority=["\']/', $optimized_attributes)) {
-                if ($is_critical) {
-                    // Critical images already handled by add_lazy_loading filter
-                    // Don't add here to avoid conflicts
+                if ($is_critical || $is_first_content_image) {
+                    // Critical images and first content image get high priority
+                    // This helps LCP significantly
+                    $optimized_attributes .= ' fetchpriority="high"';
                 } else {
-                    // All content images get low priority to not compete with LCP
+                    // All other content images get low priority to not compete with LCP
                     $optimized_attributes .= ' fetchpriority="low"';
                 }
             }
@@ -1185,6 +1186,11 @@ class SNN_WebP_Image_Optimizer {
      * Add lazy loading attributes
      */
     public function add_lazy_loading($attr, $attachment, $size) {
+        // Guard clause: prevent double execution if already processed
+        if (isset($attr['class']) && strpos($attr['class'], 'snn-lazy-image') !== false) {
+            return $attr;
+        }
+
         if (!($this->options['enable_lazy_loading'] ?? true)) {
             return $attr;
         }
@@ -1323,12 +1329,18 @@ class SNN_WebP_Image_Optimizer {
             $attr['fetchpriority'] = 'low';
             
             // Add placeholder solo si está habilitado
-            if ($this->options['enable_placeholder'] ?? true) {
+            if (false) { // TEMPORARILY DISABLED: Fix for base64 image issue
+            // if ($this->options['enable_placeholder'] ?? true) {
                 // Guardar la URL original en data-src
-                $attr['data-src'] = $attr['src'];
-                // Usar placeholder temporal
-                $attr['src'] = $this->get_placeholder_image($attachment->ID);
-                $attr['class'] = ($attr['class'] ?? '') . ' snn-lazy-image';
+                // Nota: $attr['src'] no suele estar disponible en este filtro, así que la obtenemos explícitamente
+                $image_url = wp_get_attachment_image_url($attachment->ID, $size);
+                if ($image_url) {
+                    $attr['data-src'] = $image_url;
+                    
+                    // Usar placeholder temporal
+                    $attr['src'] = $this->get_placeholder_image($attachment->ID);
+                    $attr['class'] = ($attr['class'] ?? '') . ' snn-lazy-image';
+                }
             }
         }
         

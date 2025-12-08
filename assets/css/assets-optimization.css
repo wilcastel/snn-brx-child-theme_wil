@@ -36,6 +36,40 @@ html {
 }
 
 /* ========================================
+   LAZY RENDERING SECTIONS (Alpine + Content Visibility)
+   ======================================== */
+
+/* 
+   Clase base para el Lazy Render de secciones
+   Esto usa una propiedad CSS moderna que le dice al navegador 
+   "No calcules el layout de esto hasta que esté cerca de la pantalla"
+*/
+.snn-lazy-section {
+    /* Optimización de Navegador (Lo más importante) */
+    content-visibility: auto; 
+    contain-intrinsic-size: 1px 800px; /* Estimado de altura para evitar saltos (CLS) */
+    
+    /* Estado inicial para animación (Alpine) */
+    opacity: 0;
+    transform: translateY(20px);
+    transition: opacity 0.6s ease-out, transform 0.6s ease-out;
+    will-change: opacity, transform;
+}
+
+/* Estado visible activado por Alpine */
+.snn-lazy-section.is-visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+/* Fallback para navegadores antiguos o sin JS */
+.no-js .snn-lazy-section {
+    content-visibility: visible;
+    opacity: 1;
+    transform: none;
+}
+
+/* ========================================
    LAZY LOADING OPTIMIZATIONS
    ======================================== */
 
@@ -202,6 +236,12 @@ html {
     .lazy-loading {
         animation: none;
     }
+    
+    .snn-lazy-section {
+        transition: none;
+        opacity: 1;
+        transform: none;
+    }
 }
 
 /* High contrast mode support */
@@ -225,5 +265,11 @@ html {
     
     .lazy-loading {
         display: none;
+    }
+    
+    .snn-lazy-section {
+        content-visibility: visible;
+        opacity: 1;
+        transform: none;
     }
 }

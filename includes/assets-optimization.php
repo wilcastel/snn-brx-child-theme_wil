@@ -22,10 +22,16 @@ class SNN_Assets_Optimization {
         // Solo inicializar en frontend, no en admin (excepto página de settings)
         if (is_admin()) {
             // Solo registrar settings en la página de configuración
+            // Solo registrar settings en la página de configuración o al guardar opciones
             global $pagenow;
-            if (isset($pagenow) && $pagenow === 'admin.php' && isset($_GET['page']) && $_GET['page'] === 'snn-assets-optimization') {
+            if ((isset($pagenow) && $pagenow === 'admin.php' && isset($_GET['page']) && $_GET['page'] === 'snn-assets-optimization') || 
+                (isset($pagenow) && $pagenow === 'options.php')) {
                 add_action('admin_init', array($this, 'register_settings'));
             }
+            
+            // Initialize options for admin callbacks
+            $this->options = get_option('snn_assets_options', array());
+            
             // No ejecutar nada más en admin
             return;
         }
@@ -67,6 +73,37 @@ class SNN_Assets_Optimization {
         
         // Optimize third-party scripts
         add_action('wp_enqueue_scripts', array($this, 'optimize_third_party_scripts'), 999);
+        
+        // Enqueue Alpine.js Intersect plugin for Lazy Rendering
+        add_action('wp_enqueue_scripts', array($this, 'enqueue_alpine_intersect'), 5);
+    }
+    
+    /**
+     * Enqueue Alpine.js Intersect Plugin
+     * Required for x-intersect to work in Bricks
+     */
+    public function enqueue_alpine_intersect() {
+        // Don't load in builder to avoid conflicts
+        if (function_exists('bricks_is_builder_main') && bricks_is_builder_main()) {
+            return;
+        }
+
+        // Alpine Intersect Plugin (Must load BEFORE Alpine Core)
+        wp_enqueue_script(
+            'alpine-intersect',
+            'https://lanacion.test/fotoedicion/js/ialpine.min.js',
+            array(),
+            '3.13.5',
+            false // Load in head
+        );
+        
+        // Add defer attribute to alpine-intersect
+        add_filter('script_loader_tag', function($tag, $handle) {
+            if ($handle === 'alpine-intersect') {
+                return str_replace(' src', ' defer src', $tag);
+            }
+            return $tag;
+        }, 10, 2);
     }
     
     /**
@@ -187,6 +224,14 @@ class SNN_Assets_Optimization {
             'snn-assets-optimization',
             'snn_assets_js'
         );
+        
+        add_settings_field(
+            'gtm_id',
+            __('Google Tag Manager ID', 'snn'),
+            array($this, 'gtm_id_callback'),
+            'snn-assets-optimization',
+            'snn_assets_js'
+        );
     }
     
     /**
@@ -211,6 +256,7 @@ class SNN_Assets_Optimization {
         $sanitized['js_minification'] = isset($input['js_minification']) ? (bool) $input['js_minification'] : true;
         $sanitized['remove_console_logs'] = isset($input['remove_console_logs']) ? (bool) $input['remove_console_logs'] : true;
         $sanitized['optimize_third_party'] = isset($input['optimize_third_party']) ? (bool) $input['optimize_third_party'] : true;
+        $sanitized['gtm_id'] = isset($input['gtm_id']) ? sanitize_text_field($input['gtm_id']) : '';
         
         return $sanitized;
     }
@@ -245,6 +291,14 @@ class SNN_Assets_Optimization {
         // Minify CSS (but exclude core files)
         if ($this->options['css_minification'] ?? true) {
             add_filter('style_loader_src', array($this, 'add_css_minification'), 10, 2);
+        }
+        
+        // Load CSS asynchronously if Critical CSS is enabled
+        // MODIFICACIÓN: Ahora siempre cargamos CSS de forma asíncrona (preload) para mejorar rendimiento
+        // incluso si el CSS crítico está vacío, ya que esto ayuda a que el LCP ocurra antes.
+        // Solo lo desactivamos si explicitamente se deshabilita critical CSS en opciones.
+        if ($this->options['enable_critical_css'] ?? true) {
+            add_filter('style_loader_tag', array($this, 'load_css_asynchronously'), 10, 4);
         }
     }
     
@@ -323,18 +377,6 @@ class SNN_Assets_Optimization {
      * - DNS prefetch only for non-critical resources - lighter weight
      */
     public function add_resource_hints() {
-        // Preconnect to critical external resources (fonts)
-        // Preconnect does DNS resolution + TCP handshake + TLS negotiation
-        // This is better than dns-prefetch for critical resources
-        $critical_domains = array(
-            'fonts.googleapis.com',
-            'fonts.gstatic.com'
-        );
-        
-        foreach ($critical_domains as $domain) {
-            echo '<link rel="preconnect" href="https://' . esc_attr($domain) . '" crossorigin>' . "\n";
-        }
-        
         // DNS prefetch for non-critical external domains only
         // Only use dns-prefetch for resources that don't need immediate connection
         // This reduces HTML size while still providing DNS resolution benefits
@@ -373,7 +415,8 @@ class SNN_Assets_Optimization {
             'jquery-core',
             'jquery-migrate',
             'bricks-frontend',
-            'snn-webp-optimization'
+            'snn-webp-optimization',
+            'snn-assets-optimization'
         );
         
         if (in_array($handle, $critical_scripts)) {
@@ -426,31 +469,67 @@ class SNN_Assets_Optimization {
             return;
         }
         
-        // Optimize Google Analytics
-        add_action('wp_head', array($this, 'optimize_google_analytics'), 1);
+        // Optimize Google Tag Manager (replaces old Analytics)
+        add_action('wp_head', array($this, 'optimize_gtm'), 1);
         
         // Optimize Facebook Pixel
         add_action('wp_head', array($this, 'optimize_facebook_pixel'), 1);
     }
     
     /**
-     * Optimize Google Analytics
+     * Optimize Google Tag Manager (Hybrid: Interaction + 4s Timeout)
      */
-    public function optimize_google_analytics() {
-        // Only load GA if not already loaded
-        if (wp_script_is('google-analytics', 'enqueued')) {
+    public function optimize_gtm() {
+        // Only load if not already loaded
+        if (wp_script_is('google-tag-manager', 'enqueued')) {
             return;
         }
         
-        // Add optimized GA loading
-        echo '<script>
+        $gtm_id = $this->options['gtm_id'] ?? '';
+        if (empty($gtm_id)) {
+            return;
+        }
+        
+        // Hybrid Loading Strategy:
+        // 1. Initialize dataLayer immediately (prevents data loss)
+        // 2. Load script on interaction (scroll, mousemove, touch) OR
+        // 3. Load script automatically after 4 seconds (safety timeout)
+        ?>
+        <script>
+        // 1. Init dataLayer immediately
         window.dataLayer = window.dataLayer || [];
         function gtag(){dataLayer.push(arguments);}
-        gtag("js", new Date());
-        gtag("config", "GA_MEASUREMENT_ID", {
-            "send_page_view": false
-        });
-        </script>';
+        
+        // 2. Hybrid Loader
+        (function(w,d,s,l,i){
+            var f=d.getElementsByTagName(s)[0],
+            j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';
+            j.async=true;
+            j.src='https://www.googletagmanager.com/gtm.js?id='+i+dl;
+            
+            var loaded = false;
+            
+            function loadGTM() {
+                if (loaded) return;
+                loaded = true;
+                f.parentNode.insertBefore(j,f);
+                // Remove listeners
+                window.removeEventListener('scroll', loadGTM);
+                window.removeEventListener('mousemove', loadGTM);
+                window.removeEventListener('touchstart', loadGTM);
+            }
+            
+            // Load on interaction
+            window.addEventListener('scroll', loadGTM, {passive: true});
+            window.addEventListener('mousemove', loadGTM, {passive: true});
+            window.addEventListener('touchstart', loadGTM, {passive: true});
+            
+            // Safety Timeout (4 seconds)
+            setTimeout(loadGTM, 4000);
+            
+        })(window,document,'script','dataLayer','<?php echo esc_js($gtm_id); ?>');
+        </script>
+        <?php
     }
     
     /**
@@ -580,11 +659,11 @@ class SNN_Assets_Optimization {
      */
     public function prevent_cloudflare_pagespeed_headers() {
         // Add header to exclude WordPress core CSS files from Cloudflare PageSpeed optimization
-        // This is a general header that tells Cloudflare not to optimize certain paths
+        // This is a general header that tells Cloudflare not    public function prevent_cloudflare_pagespeed_headers() {
         if (!headers_sent()) {
             // Note: Cloudflare may not respect this header, but it's worth trying
             // The best solution is to configure Cloudflare settings directly
-            header('X-Robots-Tag: noindex, nofollow', false);
+            // header('X-Robots-Tag: noindex, nofollow', false); // REMOVED to allow indexing
             
             // Alternative: Add a meta tag in HTML (done via wp_head)
             // Or configure Cloudflare via Page Rules to exclude /wp-includes/css/
@@ -632,6 +711,53 @@ class SNN_Assets_Optimization {
         return $src;
     }
     
+    /**
+     * Load CSS asynchronously
+     * Uses rel="preload" pattern for high-priority non-blocking loading
+     */
+    public function load_css_asynchronously($html, $handle, $href, $media) {
+        // Don't defer in builder or if it's not a stylesheet
+        if (is_admin() || (function_exists('bricks_is_builder_main') && bricks_is_builder_main())) {
+            return $html;
+        }
+
+        // Only defer 'all' or 'screen' media
+        if ($media !== 'all' && $media !== 'screen' && !empty($media)) {
+            return $html;
+        }
+        
+        // Skip specific handles that might be needed immediately if not in critical CSS
+        // wp-block-library is often safe to defer if we have critical CSS
+        $excluded_handles = array('admin-bar', 'dashicons');
+        if (in_array($handle, $excluded_handles)) {
+            return $html;
+        }
+
+        // Strategy: Use rel="preload" (High Priority, Non-blocking)
+        // Instead of media="print" (Low Priority), we use preload to fetch it ASAP
+        // but without blocking the render.
+        
+        $async_html = $html;
+        
+        // Replace rel='stylesheet' with rel='preload' as='style' and add onload handler
+        // We use regex to be robust against attribute order
+        $async_html = preg_replace(
+            '/\brel=["\']stylesheet["\']/',
+            'rel="preload" as="style" onload="this.onload=null;this.rel=\'stylesheet\'"',
+            $async_html
+        );
+        
+        // If regex failed (didn't match), fallback to simple replace (less robust but works for standard WP output)
+        if ($async_html === $html) {
+             $async_html = str_replace("rel='stylesheet'", "rel='preload' as='style' onload=\"this.onload=null;this.rel='stylesheet'\"", $html);
+        }
+        
+        // Add noscript fallback for users with JS disabled
+        $async_html .= '<noscript><link rel="stylesheet" href="' . esc_url($href) . '"></noscript>';
+        
+        return $async_html;
+    }
+
     /**
      * Add CSS minification (excludes core WordPress files)
      */
@@ -742,6 +868,12 @@ class SNN_Assets_Optimization {
         $value = $this->options['optimize_third_party'] ?? true;
         echo '<input type="checkbox" name="snn_assets_options[optimize_third_party]" value="1" ' . checked(1, $value, false) . '>';
         echo '<p class="description">' . __('Optimize third-party scripts like Google Analytics and Facebook Pixel.', 'snn') . '</p>';
+    }
+
+    public function gtm_id_callback() {
+        $value = $this->options['gtm_id'] ?? '';
+        echo '<input type="text" name="snn_assets_options[gtm_id]" value="' . esc_attr($value) . '" class="regular-text">';
+        echo '<p class="description">' . __('Enter your Google Tag Manager ID (e.g., GTM-XXXXXX).', 'snn') . '</p>';
     }
 }
 

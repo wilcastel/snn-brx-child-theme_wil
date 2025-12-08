@@ -7,20 +7,20 @@
  * @since 1.0.0
  */
 
-(function() {
+(function () {
     'use strict';
-    
+
     // WebP Support Detection
     function detectWebPSupport() {
         return new Promise((resolve) => {
             const webP = new Image();
-            webP.onload = webP.onerror = function() {
+            webP.onload = webP.onerror = function () {
                 resolve(webP.height === 2);
             };
             webP.src = 'data:image/webp;base64,UklGRjoAAABXRUJQVlA4IC4AAACyAgCdASoCAAIALmk0mk0iIiIiIgBoSygABc6WWgAA/veff/0PP8bA//LwYAAA';
         });
     }
-    
+
     // Lazy Loading Implementation
     class LazyImageLoader {
         constructor() {
@@ -28,17 +28,17 @@
             this.observer = null;
             this.init();
         }
-        
+
         init() {
             // Detect WebP support
             detectWebPSupport().then((supported) => {
                 document.documentElement.classList.add(supported ? 'webp' : 'no-webp');
             });
-            
+
             // Initialize lazy loading
             this.initLazyLoading();
         }
-        
+
         initLazyLoading() {
             // Check if Intersection Observer is supported
             if ('IntersectionObserver' in window) {
@@ -50,10 +50,10 @@
                         }
                     });
                 }, {
-                    rootMargin: '50px 0px',
+                    rootMargin: '200px 0px',
                     threshold: 0.01
                 });
-                
+
                 // Observe all lazy images
                 document.querySelectorAll('.snn-lazy-image').forEach(img => {
                     this.observer.observe(img);
@@ -63,52 +63,52 @@
                 this.loadAllImages();
             }
         }
-        
+
         loadImage(img) {
             const src = img.dataset.src;
             if (!src) return;
-            
+
             // Add loading class
             img.classList.add('loading');
-            
+
             // Create new image element
             const newImg = new Image();
-            
+
             newImg.onload = () => {
                 // Replace src
                 img.src = src;
                 img.classList.remove('loading');
                 img.classList.add('loaded');
-                
+
                 // Remove data-src
                 delete img.dataset.src;
-                
+
                 // Trigger custom event
                 img.dispatchEvent(new CustomEvent('lazyLoaded', {
                     detail: { src: src }
                 }));
             };
-            
+
             newImg.onerror = () => {
                 img.classList.remove('loading');
                 img.classList.add('error');
-                
+
                 // Trigger custom event
                 img.dispatchEvent(new CustomEvent('lazyError', {
                     detail: { src: src }
                 }));
             };
-            
+
             newImg.src = src;
         }
-        
+
         loadAllImages() {
             // Fallback: load all images immediately
             document.querySelectorAll('.snn-lazy-image').forEach(img => {
                 this.loadImage(img);
             });
         }
-        
+
         // Public method to add new images
         addImage(img) {
             if (this.observer) {
@@ -118,22 +118,22 @@
             }
         }
     }
-    
+
     // Critical Image Preloader
     class CriticalImagePreloader {
         constructor() {
             this.preloadedImages = new Set();
             this.init();
         }
-        
+
         init() {
             // Preload critical images
             this.preloadCriticalImages();
         }
-        
+
         preloadCriticalImages() {
             const criticalImages = document.querySelectorAll('link[rel="preload"][as="image"]');
-            
+
             criticalImages.forEach(link => {
                 const href = link.href;
                 if (!this.preloadedImages.has(href)) {
@@ -142,7 +142,7 @@
                 }
             });
         }
-        
+
         preloadImage(src) {
             const img = new Image();
             img.onload = () => {
@@ -155,20 +155,20 @@
             img.src = src;
         }
     }
-    
+
     // WebP Fallback Handler
     class WebPFallbackHandler {
         constructor() {
             this.init();
         }
-        
+
         init() {
             // Handle WebP fallback for older browsers
             if (!document.documentElement.classList.contains('webp')) {
                 this.handleFallback();
             }
         }
-        
+
         handleFallback() {
             // Replace WebP images with fallback versions
             document.querySelectorAll('img[src*=".webp"]').forEach(img => {
@@ -177,21 +177,21 @@
             });
         }
     }
-    
+
     // Image Optimization Utilities
     class ImageOptimizationUtils {
         constructor() {
             this.init();
         }
-        
+
         init() {
             // Add optimization indicators
             this.addOptimizationIndicators();
-            
+
             // Handle responsive images
             this.handleResponsiveImages();
         }
-        
+
         addOptimizationIndicators() {
             // Add WebP badges to optimized images
             document.querySelectorAll('img[src*=".webp"]').forEach(img => {
@@ -200,13 +200,13 @@
                     badge.className = 'snn-webp-badge';
                     badge.textContent = 'WebP';
                     badge.setAttribute('aria-label', 'Optimized WebP image');
-                    
+
                     img.parentElement.style.position = 'relative';
                     img.parentElement.appendChild(badge);
                 }
             });
         }
-        
+
         handleResponsiveImages() {
             // Ensure responsive behavior
             document.querySelectorAll('img').forEach(img => {
@@ -216,7 +216,7 @@
             });
         }
     }
-    
+
     // Performance Monitor
     class ImagePerformanceMonitor {
         constructor() {
@@ -228,29 +228,29 @@
             };
             this.init();
         }
-        
+
         init() {
             // Monitor lazy loading events
             document.addEventListener('lazyLoaded', (e) => {
                 this.metrics.lazyLoaded++;
                 this.logMetric('lazyLoaded', e.detail.src);
             });
-            
+
             document.addEventListener('lazyError', (e) => {
                 this.metrics.errors++;
                 this.logMetric('lazyError', e.detail.src);
             });
-            
+
             // Monitor performance
             this.monitorPerformance();
         }
-        
+
         logMetric(type, src) {
             if (window.console && console.log) {
                 console.log(`Image ${type}:`, src);
             }
         }
-        
+
         monitorPerformance() {
             // Monitor Core Web Vitals impact
             if ('PerformanceObserver' in window) {
@@ -261,16 +261,16 @@
                         }
                     });
                 });
-                
+
                 observer.observe({ entryTypes: ['largest-contentful-paint'] });
             }
         }
-        
+
         getMetrics() {
             return this.metrics;
         }
     }
-    
+
     // Initialize when DOM is ready
     function init() {
         new LazyImageLoader();
@@ -279,14 +279,14 @@
         new ImageOptimizationUtils();
         new ImagePerformanceMonitor();
     }
-    
+
     // Initialize
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);
     } else {
         init();
     }
-    
+
     // Export for external use
     window.SNNImageOptimization = {
         LazyImageLoader,
@@ -295,5 +295,5 @@
         ImageOptimizationUtils,
         ImagePerformanceMonitor
     };
-    
+
 })();

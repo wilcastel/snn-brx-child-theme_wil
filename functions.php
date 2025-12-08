@@ -38,6 +38,9 @@ require_once SNN_PATH . 'includes/security-optimization.php';
 // Head optimization (always active for better Core Web Vitals)
 require_once SNN_PATH . 'includes/head-optimization.php';
 
+// SEO Optimization (Dynamic Meta Tags)
+require_once SNN_PATH . 'includes/seo-optimization.php';
+
 
 // Security migration helper (run once to migrate existing options)
 require_once SNN_PATH . 'includes/security-migration.php';
@@ -75,13 +78,6 @@ require_once SNN_PATH . 'includes/assets-optimization-admin.php';
 // Assets Optimization Settings Page
 require_once SNN_PATH . 'includes/assets-optimization-settings.php';
 
-// Legacy security files (kept for compatibility - functionality moved to security-optimization.php)
-// require_once SNN_PATH . 'includes/security-page.php';
-// require_once SNN_PATH . 'includes/remove-wp-version.php';
-// require_once SNN_PATH . 'includes/disable-xmlrpc.php';
-// require_once SNN_PATH . 'includes/disable-file-editing.php';
-// require_once SNN_PATH . 'includes/remove-rss.php';
-// require_once SNN_PATH . 'includes/disable-wp-json-if-not-logged-in.php';
 
 require_once SNN_PATH . 'includes/post-types-settings.php';
 require_once SNN_PATH . 'includes/custom-field-settings.php';
