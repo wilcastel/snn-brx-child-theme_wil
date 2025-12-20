@@ -4,6 +4,7 @@
 # Uso: ./scripts/create-release.sh v0.0.1
 # La rama fija es: prd
 # Los tags son: v0.0.1, v0.0.2, etc.
+# -- Script Re-generado --
 
 set -e
 
@@ -38,7 +39,7 @@ fi
 # Intentar pull solo si hay remoto configurado
 if git remote -v | grep -q origin; then
     echo "📥 Actualizando develop desde remoto..."
-    git pull origin develop || echo "⚠️ No se pudo hacer pull (quizás es el primer push)"
+    git pull origin develop || echo "⚠️ No se pudo hacer pull"
 fi
 
 # Verificar si la rama prd ya existe
@@ -80,11 +81,10 @@ if git remote -v | grep -q origin; then
     git push -f origin $RELEASE_BRANCH
     git push origin $VERSION
 else
-    echo "⚠️ No hay remoto configurado. Recuerda hacer push cuando configures el origen."
+    echo "⚠️ No hay remoto configurado. Recuerda hacer push."
 fi
 
 echo ""
 echo "✅ ¡Rama de producción ($RELEASE_BRANCH) creada/actualizada exitosamente!"
 echo "🔄 Volviendo a develop..."
 git checkout develop
-

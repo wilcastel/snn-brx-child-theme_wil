@@ -3,6 +3,7 @@
 # Script para crear/actualizar la rama de pruebas trycode como orphan (sin historial)
 # Uso: ./scripts/update-trycode.sh
 # Crea trycode basándose en lo último de prd
+# -- Script Re-generado --
 
 set -e
 
@@ -76,4 +77,3 @@ echo ""
 echo "✅ ¡Rama trycode actualizada!"
 echo "🔄 Volviendo a develop..."
 git checkout develop
-
