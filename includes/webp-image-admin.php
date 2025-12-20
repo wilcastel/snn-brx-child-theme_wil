@@ -1,0 +1,1129 @@
+<?php
+/**
+ * WebP Image Optimization Admin Page
+ * 
+ * Admin interface for WebP image optimization configuration
+ * 
+ * @package SNN-BRX-WIL
+ * @since 1.0.0
+ */
+
+// Prevent direct access
+if (!defined('ABSPATH')) {
+    exit;
+}
+
+/**
+ * Render WebP Image Optimization admin page
+ */
+function snn_render_webp_optimization_page() {
+    if (!current_user_can('manage_options')) {
+        wp_die(__('You do not have sufficient permissions to access this page.'));
+    }
+    
+    $options = get_option('snn_webp_options', array());
+    
+    // Las estadísticas se cargan de forma asíncrona para no bloquear la página
+    // Mostramos placeholders mientras se cargan
+    $total_count = 0;
+    $webp_images = 0;
+    $saved_space = '0 B';
+    $conversion_rate = 0;
+    $pending_count = 0;
+    
+    ?>
+    <div class="wrap">
+        <h1><?php _e('WebP Image Optimization', 'snn'); ?></h1>
+        
+        <div class="snn-webp-optimization-admin">
+            <div class="snn-webp-stats">
+                <h2><?php _e('Image Statistics', 'snn'); ?></h2>
+                
+                <div class="stats-grid" id="webp-stats-grid">
+                    <div class="stat-item">
+                        <span class="stat-number" id="stat-total-images">
+                            <span class="spinner is-active" style="float: none; margin: 0;"></span>
+                        </span>
+                        <span class="stat-label"><?php _e('Total Images', 'snn'); ?></span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-number" id="stat-webp-images">
+                            <span class="spinner is-active" style="float: none; margin: 0;"></span>
+                        </span>
+                        <span class="stat-label"><?php _e('WebP Images', 'snn'); ?></span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-number" id="stat-saved-space">
+                            <span class="spinner is-active" style="float: none; margin: 0;"></span>
+                        </span>
+                        <span class="stat-label"><?php _e('Space Saved', 'snn'); ?></span>
+                    </div>
+                    <div class="stat-item">
+                        <span class="stat-number" id="stat-conversion-rate">
+                            <span class="spinner is-active" style="float: none; margin: 0;"></span>
+                        </span>
+                        <span class="stat-label"><?php _e('Conversion Rate', 'snn'); ?></span>
+                    </div>
+                    <div class="stat-item" id="stat-pending-item">
+                        <span class="stat-number" id="stat-pending-count">
+                            <span class="spinner is-active" style="float: none; margin: 0;"></span>
+                        </span>
+                        <span class="stat-label"><?php _e('Pending Conversion', 'snn'); ?></span>
+                    </div>
+                </div>
+                
+                <div id="webp-pending-alert" style="display: none;">
+                <div class="snn-pending-alert">
+                    <p><strong><?php _e('⚠️ Imágenes pendientes:', 'snn'); ?></strong></p>
+                    <p><?php 
+                        printf(
+                            __('Hay %s imágenes JPG/PNG que aún no tienen versión WebP. Se recomienda convertirlas para mejorar el rendimiento.', 'snn'),
+                            '<strong>' . number_format($pending_count) . '</strong>'
+                        ); 
+                    ?></p>
+                    <button id="convert-pending-images" class="button button-primary" style="margin-top: 10px;">
+                        <?php _e('Convertir Imágenes Pendientes', 'snn'); ?>
+                    </button>
+                </div>
+            </div>
+            
+            <div class="snn-webp-actions">
+                <h2><?php _e('Image Management', 'snn'); ?></h2>
+                
+                <div class="snn-webp-actions-buttons">
+                    <button id="convert-recent-posts-images" class="button button-primary" style="margin-bottom: 10px;">
+                        <?php _e('Convertir Imágenes de los 100 Últimos Posts', 'snn'); ?>
+                    </button>
+                    <p class="description" style="margin-bottom: 15px;">
+                        <?php _e('Convierte las imágenes destacadas y las imágenes del contenido de los 100 posts más recientes a formato WebP.', 'snn'); ?>
+                    </p>
+                    
+                    <input type="text" id="snn-folder-path" class="regular-text" style="min-width:340px" />
+                    <button id="convert-folder" class="button button-primary">
+                        <?php _e('Convert Folder to WebP', 'snn'); ?>
+                    </button>
+                </div>
+                <p class="description">
+                    <?php 
+                        $u = wp_upload_dir(); 
+                        echo esc_html( sprintf(__("Absolute path or uploads-relative path. Uploads base: %s", 'snn'), $u['basedir']) );
+                    ?>
+                </p>
+                
+                <div id="webp-results" class="snn-webp-results" style="display: none;">
+                    <!-- Results will be shown here -->
+                </div>
+            </div>
+            
+            <div class="snn-webp-settings">
+                <h2><?php _e('Settings', 'snn'); ?></h2>
+                
+                <form method="post" action="options.php">
+                    <?php
+                    settings_fields('snn_webp_options');
+                    do_settings_sections('snn-webp-optimization');
+                    submit_button();
+                    ?>
+                </form>
+            </div>
+            
+            <div class="snn-webp-info-panel">
+                <h2><?php _e('About WebP Image Optimization', 'snn'); ?></h2>
+                <p><?php _e('WebP image optimization improves Core Web Vitals by reducing image file sizes while maintaining quality.', 'snn'); ?></p>
+                
+                <?php
+                // Check if Cloudflare is detected (common headers)
+                $has_cloudflare = false;
+                if (isset($_SERVER['HTTP_CF_RAY']) || isset($_SERVER['HTTP_CF_VISITOR']) || isset($_SERVER['HTTP_CF_CONNECTING_IP'])) {
+                    $has_cloudflare = true;
+                }
+                
+                if ($has_cloudflare): ?>
+                <div class="snn-cloudflare-notice" style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0; border-radius: 4px;">
+                    <h3 style="margin-top: 0;">⚠️ <?php _e('Cloudflare Detectado', 'snn'); ?></h3>
+                    <p><strong><?php _e('Recomendación:', 'snn'); ?></strong></p>
+                    <p><?php _e('Si tienes Cloudflare con "Polish" o "Image Resizing" activado, se recomienda <strong>desactivar</strong> la conversión WebP del theme para evitar duplicación y conflictos.', 'snn'); ?></p>
+                    <ul style="margin-left: 20px;">
+                        <li><?php _e('Cloudflare convierte imágenes a WebP automáticamente sin ocupar espacio en tu servidor', 'snn'); ?></li>
+                        <li><?php _e('El theme crea archivos WebP físicos que ocupan espacio adicional', 'snn'); ?></li>
+                        <li><?php _e('Usar ambos puede causar conflictos o procesamiento duplicado', 'snn'); ?></li>
+                    </ul>
+                    <p><strong><?php _e('Para usar solo Cloudflare:', 'snn'); ?></strong></p>
+                    <ol style="margin-left: 20px;">
+                        <li><?php _e('Desactiva "Enable WebP Conversion" más abajo', 'snn'); ?></li>
+                        <li><?php _e('Asegúrate de que Cloudflare Polish/Image Resizing esté activado', 'snn'); ?></li>
+                        <li><?php _e('Guarda los cambios', 'snn'); ?></li>
+                    </ol>
+                </div>
+                <?php endif; ?>
+                
+                <h3><?php _e('Features:', 'snn'); ?></h3>
+                <ul>
+                    <li><?php _e('Automatic WebP conversion', 'snn'); ?></li>
+                    <li><?php _e('Image resizing and optimization', 'snn'); ?></li>
+                    <li><?php _e('Critical image preloading', 'snn'); ?></li>
+                    <li><?php _e('Lazy loading for non-critical images', 'snn'); ?></li>
+                    <li><?php _e('Placeholder images', 'snn'); ?></li>
+                    <li><?php _e('Fallback support for older browsers', 'snn'); ?></li>
+                </ul>
+                
+                <h3><?php _e('Core Web Vitals Benefits:', 'snn'); ?></h3>
+                <ul>
+                    <li><?php _e('LCP: Faster loading of critical images', 'snn'); ?></li>
+                    <li><?php _e('CLS: Reduced layout shift with placeholders', 'snn'); ?></li>
+                    <li><?php _e('FID: Less blocking resources', 'snn'); ?></li>
+                </ul>
+                
+                <h3><?php _e('Browser Support:', 'snn'); ?></h3>
+                <ul>
+                    <li><?php _e('Chrome: Full support', 'snn'); ?></li>
+                    <li><?php _e('Firefox: Full support', 'snn'); ?></li>
+                    <li><?php _e('Safari: Full support', 'snn'); ?></li>
+                    <li><?php _e('Edge: Full support', 'snn'); ?></li>
+                    <li><?php _e('IE: Fallback to original format', 'snn'); ?></li>
+                </ul>
+                
+                <h3><?php _e('File Structure:', 'snn'); ?></h3>
+                <ul>
+                    <li><strong><?php _e('Original Images:', 'snn'); ?></strong> <code>/wp-content/uploads/</code></li>
+                    <li><strong><?php _e('WebP Images:', 'snn'); ?></strong> <code>/wp-content/uploads/webp/</code></li>
+                    <li><strong><?php _e('Automatic Fallback:', 'snn'); ?></strong> <?php _e('Original format for unsupported browsers', 'snn'); ?></li>
+                </ul>
+            </div>
+        </div>
+    </div>
+    
+    <style>
+    .snn-webp-optimization-admin {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 30px;
+        margin-top: 20px;
+    }
+    
+    .snn-webp-stats,
+    .snn-webp-actions,
+    .snn-webp-settings,
+    .snn-webp-info-panel {
+        background: #fff;
+        padding: 20px;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+    }
+    
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 15px;
+        margin-top: 10px;
+    }
+    
+    .stat-item {
+        text-align: center;
+        padding: 15px;
+        background: #f9f9f9;
+        border-radius: 4px;
+        border: 1px solid #ddd;
+    }
+    
+    .stat-number {
+        display: block;
+        font-size: 28px;
+        font-weight: bold;
+        color: #2271b1;
+        margin-bottom: 5px;
+    }
+    
+    .stat-label {
+        font-size: 12px;
+        color: #666;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    
+    .stat-warning {
+        border-color: #ffb900;
+        background: #fffbf0;
+    }
+    
+    .stat-warning .stat-number {
+        color: #d63638;
+    }
+    
+    .stat-success {
+        border-color: #10b981;
+        background: #f0fdf4;
+    }
+    
+    .stat-success .stat-number {
+        color: #10b981;
+    }
+    
+    .snn-pending-alert {
+        margin-top: 20px;
+        padding: 15px;
+        background: #fffbf0;
+        border-left: 4px solid #ffb900;
+        border-radius: 4px;
+    }
+    
+    .snn-pending-alert p {
+        margin: 5px 0;
+    }
+    
+    .snn-webp-actions-buttons {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        margin-bottom: 20px;
+    }
+    
+    .snn-webp-results {
+        background: #f0f8ff;
+        padding: 15px;
+        border-radius: 4px;
+        border-left: 4px solid #2271b1;
+    }
+    
+    .snn-webp-info-panel ul {
+        margin-left: 20px;
+    }
+    
+    .snn-webp-info-panel li {
+        margin-bottom: 8px;
+    }
+    
+    /* Progress Bar Styles */
+    .snn-progress-container {
+        background: #f0f8ff;
+        padding: 20px;
+        border-radius: 8px;
+        border-left: 4px solid #2271b1;
+        margin: 20px 0;
+    }
+    
+    .snn-progress-bar {
+        width: 100%;
+        height: 20px;
+        background: #e5e7eb;
+        border-radius: 10px;
+        overflow: hidden;
+        margin-bottom: 10px;
+    }
+    
+    .snn-progress-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #2271b1, #10b981);
+        border-radius: 10px;
+        transition: width 0.3s ease-in-out;
+        position: relative;
+    }
+    
+    .snn-progress-fill::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+        animation: shimmer 2s infinite;
+    }
+    
+    @keyframes shimmer {
+        0% { transform: translateX(-100%); }
+        100% { transform: translateX(100%); }
+    }
+    
+    .snn-progress-text {
+        text-align: center;
+        font-weight: bold;
+        color: #2271b1;
+        margin-bottom: 15px;
+    }
+    
+    .snn-progress-actions {
+        text-align: center;
+    }
+    
+    .snn-progress-actions .button {
+        margin: 0 5px;
+    }
+    
+    .snn-progress-info {
+        background: #f8f9fa;
+        padding: 15px;
+        border-radius: 4px;
+        margin-top: 10px;
+        border-left: 3px solid #10b981;
+    }
+    
+    .snn-progress-info p {
+        margin: 5px 0;
+        font-size: 14px;
+    }
+    
+    .snn-progress-info p:first-child {
+        font-weight: bold;
+        color: #10b981;
+    }
+    
+    @media (max-width: 768px) {
+        .snn-webp-optimization-admin {
+            grid-template-columns: 1fr;
+        }
+        
+        .snn-webp-actions-buttons {
+            flex-direction: column;
+        }
+        
+        .stats-grid {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+    </style>
+    
+    <script>
+    jQuery(document).ready(function($) {
+        let conversionState = {
+            isRunning: false,
+            totalProcessed: 0,
+            totalConverted: 0,
+            totalErrors: 0,
+            currentOffset: 0,
+            batchSize: <?php echo intval(get_option('snn_webp_options')['batch_size'] ?? 50); ?>
+        };
+        
+        $('#convert-images').on('click', function() {
+            if (conversionState.isRunning) {
+                stopConversion();
+                return;
+            }
+            
+            startConversion();
+        });
+        
+        function startConversion() {
+            const button = $('#convert-images');
+            
+            conversionState.isRunning = true;
+            conversionState.totalProcessed = 0;
+            conversionState.totalConverted = 0;
+            conversionState.totalErrors = 0;
+            conversionState.currentOffset = 0;
+            
+            button.prop('disabled', true).text('<?php _e('Converting...', 'snn'); ?>');
+            $('#webp-results').hide();
+            
+            // Show progress bar
+            showProgressBar();
+            
+            processBatch();
+        }
+        
+        function stopConversion() {
+            conversionState.isRunning = false;
+            const button = $('#convert-images');
+            button.prop('disabled', false).text('<?php _e('Convert All Images to WebP', 'snn'); ?>');
+            
+            showWebPResults('warning', '<?php _e('Conversion stopped by user', 'snn'); ?>');
+        }
+        
+        function processBatch() {
+            if (!conversionState.isRunning) {
+                return;
+            }
+            
+            $.ajax({
+                url: ajaxurl,
+                type: 'POST',
+                data: {
+                    action: 'snn_convert_images',
+                    nonce: '<?php echo wp_create_nonce('snn_webp_nonce'); ?>',
+                    batch_size: conversionState.batchSize,
+                    offset: conversionState.currentOffset,
+                    total_processed: conversionState.totalProcessed,
+                    total_converted: conversionState.totalConverted,
+                    total_errors: conversionState.totalErrors
+                },
+                success: function(response) {
+                    if (response.success) {
+                        // Update state
+                        conversionState.totalProcessed = response.data.total_processed;
+                        conversionState.totalConverted = response.data.total_converted;
+                        conversionState.totalErrors = response.data.total_errors;
+                        conversionState.currentOffset = response.data.next_offset;
+                        
+                        // Update progress
+                        updateProgress(response.data.progress_percent);
+                        
+                        if (response.data.has_more) {
+                            // Continue with next batch
+                            setTimeout(processBatch, 100); // Small delay to prevent server overload
+                        } else {
+                            // Conversion completed
+                            completeConversion();
+                        }
+                    } else {
+                        showWebPResults('error', '<?php _e('Failed to convert images', 'snn'); ?>');
+                        stopConversion();
+                    }
+                },
+                error: function() {
+                    showWebPResults('error', '<?php _e('An error occurred while converting images', 'snn'); ?>');
+                    stopConversion();
+                }
+            });
+        }
+        
+        function completeConversion() {
+            conversionState.isRunning = false;
+            const button = $('#convert-images');
+            button.prop('disabled', false).text('<?php _e('Convert All Images to WebP', 'snn'); ?>');
+            
+            const message = '<?php _e('Conversion completed!', 'snn'); ?>' + 
+                '<br><strong><?php _e('Total Processed:', 'snn'); ?></strong> ' + conversionState.totalProcessed.toLocaleString() +
+                '<br><strong><?php _e('Converted:', 'snn'); ?></strong> ' + conversionState.totalConverted.toLocaleString() +
+                '<br><strong><?php _e('Errors:', 'snn'); ?></strong> ' + conversionState.totalErrors.toLocaleString();
+            
+            showWebPResults('success', message);
+            hideProgressBar();
+        }
+        
+        function showProgressBar() {
+            const progressHtml = `
+                <div id="conversion-progress" class="snn-progress-container">
+                    <div class="snn-progress-bar">
+                        <div class="snn-progress-fill" style="width: 0%"></div>
+                    </div>
+                    <div class="snn-progress-text">
+                        <span id="progress-percent">0%</span> - 
+                        <span id="progress-stats"><?php _e('Starting...', 'snn'); ?></span>
+                    </div>
+                    <div class="snn-progress-actions">
+                        <button id="stop-conversion" class="button button-secondary"><?php _e('Stop Conversion', 'snn'); ?></button>
+                    </div>
+                </div>
+            `;
+            
+            $('#webp-results').html(progressHtml).show();
+            
+            $('#stop-conversion').on('click', function() {
+                stopConversion();
+            });
+        }
+        
+        function updateProgress(percent) {
+            $('.snn-progress-fill').css('width', percent + '%');
+            $('#progress-percent').text(percent + '%');
+            $('#progress-stats').text(
+                conversionState.totalProcessed.toLocaleString() + ' <?php _e('processed', 'snn'); ?> | ' +
+                conversionState.totalConverted.toLocaleString() + ' <?php _e('converted', 'snn'); ?> | ' +
+                conversionState.totalErrors.toLocaleString() + ' <?php _e('errors', 'snn'); ?>'
+            );
+        }
+        
+        function hideProgressBar() {
+            $('#conversion-progress').remove();
+        }
+        
+        // Background conversion
+        $('#start-background-conversion').on('click', function() {
+            const button = $(this);
+            
+            button.prop('disabled', true).text('<?php _e('Starting...', 'snn'); ?>');
+            
+            $.ajax({
+                url: ajaxurl,
+                type: 'POST',
+                data: {
+                    action: 'snn_start_background_conversion',
+                    nonce: '<?php echo wp_create_nonce('snn_webp_nonce'); ?>'
+                },
+                success: function(response) {
+                    if (response.success) {
+                        showWebPResults('success', '<?php _e('Background conversion started! Check back in a few minutes.', 'snn'); ?>');
+                        startStatusPolling();
+                    } else {
+                        showWebPResults('error', '<?php _e('Failed to start background conversion', 'snn'); ?>');
+                    }
+                },
+                error: function() {
+                    showWebPResults('error', '<?php _e('An error occurred while starting background conversion', 'snn'); ?>');
+                },
+                complete: function() {
+                    button.prop('disabled', false).text('<?php _e('Start Background Conversion', 'snn'); ?>');
+                }
+            });
+        });
+        
+        function startStatusPolling() {
+            const statusInterval = setInterval(function() {
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'snn_get_conversion_status',
+                        nonce: '<?php echo wp_create_nonce('snn_webp_nonce'); ?>'
+                    },
+                    success: function(response) {
+                        if (response.success) {
+                            const status = response.data;
+                            
+                            if (status.status === 'completed') {
+                                clearInterval(statusInterval);
+                                showWebPResults('success', 
+                                    '<?php _e('Background conversion completed!', 'snn'); ?>' +
+                                    '<br><strong><?php _e('Total Processed:', 'snn'); ?></strong> ' + status.total_processed.toLocaleString() +
+                                    '<br><strong><?php _e('Converted:', 'snn'); ?></strong> ' + status.total_converted.toLocaleString() +
+                                    '<br><strong><?php _e('Errors:', 'snn'); ?></strong> ' + status.total_errors.toLocaleString()
+                                );
+                            } else if (status.status === 'running') {
+                                showBackgroundProgress(status);
+                            }
+                        }
+                    }
+                });
+            }, 5000); // Poll every 5 seconds
+        }
+        
+        function showBackgroundProgress(status) {
+            const progressHtml = `
+                <div id="background-progress" class="snn-progress-container">
+                    <div class="snn-progress-bar">
+                        <div class="snn-progress-fill" style="width: ${status.progress_percent}%"></div>
+                    </div>
+                    <div class="snn-progress-text">
+                        <span id="background-progress-percent">${status.progress_percent}%</span> - 
+                        <span id="background-progress-stats">
+                            ${status.total_processed.toLocaleString()} <?php _e('processed', 'snn'); ?> | 
+                            ${status.total_converted.toLocaleString()} <?php _e('converted', 'snn'); ?> | 
+                            ${status.total_errors.toLocaleString()} <?php _e('errors', 'snn'); ?>
+                        </span>
+                    </div>
+                    <div class="snn-progress-info">
+                        <p><strong><?php _e('Background Conversion Running', 'snn'); ?></strong></p>
+                        <p><?php _e('This process runs in the background and will continue even if you close this page.', 'snn'); ?></p>
+                        <p><?php _e('Batch', 'snn'); ?> ${status.current_batch} - <?php _e('Progress updates every 5 seconds', 'snn'); ?></p>
+                    </div>
+                </div>
+            `;
+            
+            $('#webp-results').html(progressHtml).show();
+        }
+        
+        $('#optimize-images').on('click', function() {
+            const button = $(this);
+            
+            button.prop('disabled', true).text('<?php _e('Optimizing...', 'snn'); ?>');
+            $('#webp-results').hide();
+            
+            $.ajax({
+                url: ajaxurl,
+                type: 'POST',
+                data: {
+                    action: 'snn_optimize_images',
+                    nonce: '<?php echo wp_create_nonce('snn_webp_nonce'); ?>'
+                },
+                success: function(response) {
+                    if (response.success) {
+                        const message = response.data.message + 
+                            '<br><strong><?php _e('Optimized:', 'snn'); ?></strong> ' + response.data.optimized +
+                            '<br><strong><?php _e('Space Saved:', 'snn'); ?></strong> ' + response.data.saved_space;
+                        showWebPResults('success', message);
+                    } else {
+                        showWebPResults('error', '<?php _e('Failed to optimize images', 'snn'); ?>');
+                    }
+                },
+                error: function() {
+                    showWebPResults('error', '<?php _e('An error occurred while optimizing images', 'snn'); ?>');
+                },
+                complete: function() {
+                    button.prop('disabled', false).text('<?php _e('Optimize Images', 'snn'); ?>');
+                }
+            });
+        });
+        
+        $('#clear-webp').on('click', function() {
+            if (!confirm('<?php _e('Are you sure you want to clear the WebP cache?', 'snn'); ?>')) {
+                return;
+            }
+            
+            const button = $(this);
+            button.prop('disabled', true).text('<?php _e('Clearing...', 'snn'); ?>');
+            
+            $.ajax({
+                url: ajaxurl,
+                type: 'POST',
+                data: {
+                    action: 'snn_clear_webp_cache',
+                    nonce: '<?php echo wp_create_nonce('snn_webp_nonce'); ?>'
+                },
+                success: function(response) {
+                    if (response.success) {
+                        showWebPResults('success', '<?php _e('WebP cache cleared successfully', 'snn'); ?>');
+                    } else {
+                        showWebPResults('error', '<?php _e('Failed to clear WebP cache', 'snn'); ?>');
+                    }
+                },
+                error: function() {
+                    showWebPResults('error', '<?php _e('An error occurred while clearing cache', 'snn'); ?>');
+                },
+                complete: function() {
+                    button.prop('disabled', false).text('<?php _e('Clear WebP Cache', 'snn'); ?>');
+                }
+            });
+        });
+        
+        // Convert specific folder
+        $('#convert-folder').on('click', function() {
+            const folderInput = $('#snn-folder-path');
+            const folder = folderInput.val().trim();
+            if (!folder) {
+                showWebPResults('error', '<?php _e('Please enter a folder path', 'snn'); ?>');
+                return;
+            }
+            const button = $(this);
+            button.prop('disabled', true).text('<?php _e('Converting folder...', 'snn'); ?>');
+            
+            showProgressBar();
+            
+            $.ajax({
+                url: ajaxurl,
+                type: 'POST',
+                data: {
+                    action: 'snn_convert_folder',
+                    nonce: '<?php echo wp_create_nonce('snn_webp_nonce'); ?>',
+                    folder
+                },
+                success: function(response) {
+                    if (response.success) {
+                        const d = response.data;
+                        updateProgress(100);
+                        const message = '<?php _e('Folder conversion completed!', 'snn'); ?>' +
+                          '<br><strong><?php _e('Processed:', 'snn'); ?></strong> ' + d.processed.toLocaleString() +
+                          '<br><strong><?php _e('Converted:', 'snn'); ?></strong> ' + d.converted.toLocaleString() +
+                          '<br><strong><?php _e('Errors:', 'snn'); ?></strong> ' + d.errors.toLocaleString();
+                        showWebPResults('success', message);
+                    } else {
+                        showWebPResults('error', response.data?.message || '<?php _e('Failed to convert folder', 'snn'); ?>');
+                    }
+                },
+                error: function() {
+                    showWebPResults('error', '<?php _e('An error occurred while converting folder', 'snn'); ?>');
+                },
+                complete: function() {
+                    hideProgressBar();
+                    button.prop('disabled', false).text('<?php _e('Convert Folder to WebP', 'snn'); ?>');
+                }
+            });
+        });
+        
+        // Convert pending images
+        let pendingConversionState = {
+            isRunning: false,
+            totalProcessed: 0,
+            totalConverted: 0,
+            totalErrors: 0,
+            totalPending: 0
+        };
+        
+        // Convert images from recent posts
+        let recentPostsConversionState = {
+            isRunning: false,
+            totalProcessed: 0,
+            totalConverted: 0,
+            totalErrors: 0,
+            offset: 0
+        };
+        
+        $('#convert-recent-posts-images').on('click', function() {
+            if (recentPostsConversionState.isRunning) {
+                stopRecentPostsConversion();
+                return;
+            }
+            
+            if (!confirm('<?php _e('¿Convertir imágenes de los 100 últimos posts? Esto puede tardar varios minutos.', 'snn'); ?>')) {
+                return;
+            }
+            
+            const button = $('#convert-recent-posts-images');
+            button.prop('disabled', true).text('<?php _e('Convirtiendo...', 'snn'); ?>');
+            
+            recentPostsConversionState.isRunning = true;
+            recentPostsConversionState.totalProcessed = 0;
+            recentPostsConversionState.totalConverted = 0;
+            recentPostsConversionState.totalErrors = 0;
+            recentPostsConversionState.offset = 0;
+            
+            showWebPResults('info', '<?php _e('Iniciando conversión de imágenes de los 100 últimos posts...', 'snn'); ?>');
+            processRecentPostsBatch();
+        });
+        
+        function stopRecentPostsConversion() {
+            recentPostsConversionState.isRunning = false;
+            const button = $('#convert-recent-posts-images');
+            button.prop('disabled', false).text('<?php _e('Convertir Imágenes de los 100 Últimos Posts', 'snn'); ?>');
+            showWebPResults('warning', '<?php _e('Conversión detenida por el usuario', 'snn'); ?>');
+        }
+        
+        function processRecentPostsBatch() {
+            if (!recentPostsConversionState.isRunning) {
+                return;
+            }
+            
+            $.ajax({
+                url: ajaxurl,
+                type: 'POST',
+                data: {
+                    action: 'snn_convert_recent_posts_images',
+                    nonce: '<?php echo wp_create_nonce('snn_webp_nonce'); ?>',
+                    posts_per_batch: 10,
+                    offset: recentPostsConversionState.offset,
+                    total_processed: recentPostsConversionState.totalProcessed,
+                    total_converted: recentPostsConversionState.totalConverted,
+                    total_errors: recentPostsConversionState.totalErrors
+                },
+                success: function(response) {
+                    if (response.success) {
+                        recentPostsConversionState.totalProcessed = response.data.total_processed;
+                        recentPostsConversionState.totalConverted = response.data.total_converted;
+                        recentPostsConversionState.totalErrors = response.data.total_errors;
+                        recentPostsConversionState.offset = response.data.next_offset;
+                        
+                        const progress = response.data.progress_percent || 0;
+                        updateProgress(progress);
+                        
+                        const message = response.data.message + '<br>' +
+                            '<strong><?php _e('Posts procesados:', 'snn'); ?></strong> ' + response.data.total_processed + '<br>' +
+                            '<strong><?php _e('Imágenes convertidas:', 'snn'); ?></strong> ' + response.data.total_converted + '<br>' +
+                            '<strong><?php _e('Errores:', 'snn'); ?></strong> ' + response.data.total_errors;
+                        
+                        showWebPResults('info', message);
+                        
+                        if (response.data.has_more) {
+                            setTimeout(processRecentPostsBatch, 500);
+                        } else {
+                            completeRecentPostsConversion();
+                        }
+                    } else {
+                        showWebPResults('error', response.data.message || '<?php _e('Error en la conversión', 'snn'); ?>');
+                        stopRecentPostsConversion();
+                    }
+                },
+                error: function() {
+                    showWebPResults('error', '<?php _e('Error de conexión', 'snn'); ?>');
+                    stopRecentPostsConversion();
+                }
+            });
+        }
+        
+        function completeRecentPostsConversion() {
+            recentPostsConversionState.isRunning = false;
+            const button = $('#convert-recent-posts-images');
+            button.prop('disabled', false).text('<?php _e('Convertir Imágenes de los 100 Últimos Posts', 'snn'); ?>');
+            
+            updateProgress(100);
+            
+            // Invalidar cache y recargar estadísticas
+            $(document).trigger('webp-conversion-complete');
+            
+            const message = '<?php _e('Conversión completada!', 'snn'); ?>' +
+                '<br><strong><?php _e('Posts procesados:', 'snn'); ?></strong> ' + recentPostsConversionState.totalProcessed +
+                '<br><strong><?php _e('Imágenes convertidas:', 'snn'); ?></strong> ' + recentPostsConversionState.totalConverted +
+                '<br><strong><?php _e('Errores:', 'snn'); ?></strong> ' + recentPostsConversionState.totalErrors;
+            
+            showWebPResults('success', message);
+        }
+        
+        $('#convert-pending-images').on('click', function() {
+            if (pendingConversionState.isRunning) {
+                stopPendingConversion();
+                return;
+            }
+            
+            if (!confirm('<?php _e('¿Estás seguro de que quieres convertir todas las imágenes pendientes? Esto puede tardar varios minutos.', 'snn'); ?>')) {
+                return;
+            }
+            
+            startPendingConversion();
+        });
+        
+        function startPendingConversion() {
+            const button = $('#convert-pending-images');
+            button.prop('disabled', true).text('<?php _e('Convirtiendo...', 'snn'); ?>');
+            
+            pendingConversionState.isRunning = true;
+            pendingConversionState.totalProcessed = 0;
+            pendingConversionState.totalConverted = 0;
+            pendingConversionState.totalErrors = 0;
+            
+            showProgressBar();
+            processPendingBatch();
+        }
+        
+        function stopPendingConversion() {
+            pendingConversionState.isRunning = false;
+            const button = $('#convert-pending-images');
+            button.prop('disabled', false).text('<?php _e('Convertir Imágenes Pendientes', 'snn'); ?>');
+            showWebPResults('warning', '<?php _e('Conversión detenida por el usuario', 'snn'); ?>');
+        }
+        
+        function processPendingBatch() {
+            if (!pendingConversionState.isRunning) {
+                return;
+            }
+            
+            $.ajax({
+                url: ajaxurl,
+                type: 'POST',
+                data: {
+                    action: 'snn_convert_pending_images',
+                    nonce: '<?php echo wp_create_nonce('snn_webp_nonce'); ?>'
+                },
+                success: function(response) {
+                    if (response.success) {
+                        const d = response.data;
+                        
+                        // Update state
+                        pendingConversionState.totalProcessed += d.processed;
+                        pendingConversionState.totalConverted += d.converted;
+                        pendingConversionState.totalErrors += d.errors;
+                        
+                        if (!pendingConversionState.totalPending && d.total_pending) {
+                            pendingConversionState.totalPending = d.total_pending;
+                        }
+                        
+                        // Update progress
+                        const percent = pendingConversionState.totalPending > 0 
+                            ? Math.round((pendingConversionState.totalProcessed / pendingConversionState.totalPending) * 100)
+                            : 0;
+                        updateProgress(Math.min(percent, 99));
+                        
+                        // Update progress text
+                        $('#progress-stats').text(
+                            pendingConversionState.totalProcessed.toLocaleString() + ' <?php _e('procesadas', 'snn'); ?> | ' +
+                            pendingConversionState.totalConverted.toLocaleString() + ' <?php _e('convertidas', 'snn'); ?> | ' +
+                            pendingConversionState.totalErrors.toLocaleString() + ' <?php _e('errores', 'snn'); ?> | ' +
+                            d.remaining.toLocaleString() + ' <?php _e('pendientes', 'snn'); ?>'
+                        );
+                        
+                        // If there are more images, continue
+                        if (d.remaining > 0 && pendingConversionState.isRunning) {
+                            setTimeout(processPendingBatch, 100);
+                        } else {
+                            // Conversion completed
+                            completePendingConversion();
+                        }
+                    } else {
+                        showWebPResults('error', response.data?.message || '<?php _e('Error al convertir imágenes pendientes', 'snn'); ?>');
+                        stopPendingConversion();
+                    }
+                },
+                error: function() {
+                    showWebPResults('error', '<?php _e('Error al procesar la solicitud', 'snn'); ?>');
+                    stopPendingConversion();
+                }
+            });
+        }
+        
+        function completePendingConversion() {
+            pendingConversionState.isRunning = false;
+            const button = $('#convert-pending-images');
+            button.prop('disabled', false).text('<?php _e('Convertir Imágenes Pendientes', 'snn'); ?>');
+            
+            updateProgress(100);
+            
+            const message = '<?php _e('Conversión completada!', 'snn'); ?>' +
+              '<br><strong><?php _e('Procesadas:', 'snn'); ?></strong> ' + pendingConversionState.totalProcessed.toLocaleString() +
+              '<br><strong><?php _e('Convertidas:', 'snn'); ?></strong> ' + pendingConversionState.totalConverted.toLocaleString() +
+              '<br><strong><?php _e('Errores:', 'snn'); ?></strong> ' + pendingConversionState.totalErrors.toLocaleString();
+            
+            showWebPResults('success', message);
+            
+            // Invalidar cache y recargar estadísticas
+            $(document).trigger('webp-conversion-complete');
+            
+            // Reload page after 3 seconds to update stats
+            setTimeout(function() {
+                location.reload();
+            }, 3000);
+        }
+        
+        $('#test-conversion').on('click', function() {
+            const button = $(this);
+            button.prop('disabled', true).text('<?php _e('Testing...', 'snn'); ?>');
+            
+            $.ajax({
+                url: ajaxurl,
+                type: 'POST',
+                data: {
+                    action: 'snn_test_conversion',
+                    nonce: '<?php echo wp_create_nonce('snn_webp_nonce'); ?>'
+                },
+                success: function(response) {
+                    if (response.success) {
+                        showWebPResults('success', response.data.message);
+                    } else {
+                        showWebPResults('error', response.data.message || '<?php _e('Test failed', 'snn'); ?>');
+                    }
+                },
+                error: function() {
+                    showWebPResults('error', '<?php _e('An error occurred during test', 'snn'); ?>');
+                },
+                complete: function() {
+                    button.prop('disabled', false).text('<?php _e('Test Single Conversion', 'snn'); ?>');
+                }
+            });
+        });
+        
+        function showWebPResults(type, message) {
+            const resultClass = type === 'success' ? 'notice-success' : 'notice-error';
+            const icon = type === 'success' ? '✅' : '❌';
+            
+            $('#webp-results').html(`
+                <div class="notice ${resultClass}">
+                    <p>${icon} ${message}</p>
+                </div>
+            `).show();
+        }
+    });
+    </script>
+    <?php
+}
+
+/**
+ * Get accurate image count
+ */
+function snn_get_accurate_image_count() {
+    global $wpdb;
+    
+    // Get count of all image attachments
+    $count = $wpdb->get_var("
+        SELECT COUNT(*) 
+        FROM {$wpdb->posts} 
+        WHERE post_type = 'attachment' 
+        AND post_mime_type LIKE 'image/%'
+        AND post_status = 'inherit'
+    ");
+    
+    // Debug: Log removido - Solo se usa cuando es necesario para debugging
+    
+    return intval($count);
+}
+
+/**
+ * Count WebP images (All locations)
+ */
+function snn_count_webp_images() {
+    $upload_dir = wp_upload_dir();
+    $upload_basedir = $upload_dir['basedir'];
+    
+    // Count WebP files in uploads directory recursively (Windows compatible)
+    $count = 0;
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($upload_basedir, RecursiveDirectoryIterator::SKIP_DOTS)
+    );
+    
+    foreach ($iterator as $file) {
+        if ($file->isFile() && strtolower($file->getExtension()) === 'webp') {
+            $count++;
+        }
+    }
+    
+    // Debug: Log removido - Solo se usa cuando es necesario para debugging
+    
+    return $count;
+}
+
+/**
+ * Calculate saved space (All WebP files)
+ */
+function snn_calculate_saved_space() {
+    $upload_dir = wp_upload_dir();
+    $upload_basedir = $upload_dir['basedir'];
+    
+    $total_size = 0;
+    
+    // Count WebP files and calculate total size (Windows compatible)
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($upload_basedir, RecursiveDirectoryIterator::SKIP_DOTS)
+    );
+    
+    foreach ($iterator as $file) {
+        if ($file->isFile() && strtolower($file->getExtension()) === 'webp') {
+            $total_size += $file->getSize();
+        }
+    }
+    
+    return size_format($total_size);
+}
+
+/**
+ * Count images on disk by extension and compute conversion rate
+ */
+function snn_count_images_on_disk() {
+    $upload_dir = wp_upload_dir();
+    $base = $upload_dir['basedir'];
+    $counts = array('jpg'=>0,'jpeg'=>0,'png'=>0,'webp'=>0);
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($base, RecursiveDirectoryIterator::SKIP_DOTS)
+    );
+    foreach ($iterator as $file) {
+        if (!$file->isFile()) { continue; }
+        $ext = strtolower($file->getExtension());
+        if (isset($counts[$ext])) { $counts[$ext]++; }
+    }
+    $originals = $counts['jpg'] + $counts['jpeg'] + $counts['png'];
+    $total = $originals + $counts['webp'];
+    $rate = $total > 0 ? ($counts['webp'] / $total) * 100 : 0;
+    return array(
+        'jpg' => $counts['jpg'],
+        'jpeg' => $counts['jpeg'],
+        'png' => $counts['png'],
+        'webp' => $counts['webp'],
+        'total' => $total,
+        'originals' => $originals,
+        'rate' => round($rate, 1),
+    );
+}
+
+/**
+ * Count pending images (JPG/PNG that don't have WebP versions)
+ */
+function snn_count_pending_images() {
+    $upload_dir = wp_upload_dir();
+    $base = $upload_dir['basedir'];
+    $pending = 0;
+    $total_size = 0;
+    
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($base, RecursiveDirectoryIterator::SKIP_DOTS)
+    );
+    
+    foreach ($iterator as $file) {
+        if (!$file->isFile()) { continue; }
+        
+        $ext = strtolower($file->getExtension());
+        
+        // Only check JPG and PNG files
+        if (!in_array($ext, array('jpg', 'jpeg', 'png'))) {
+            continue;
+        }
+        
+        // Check if WebP version exists in the same directory
+        $file_info = pathinfo($file->getPathname());
+        $webp_path = $file_info['dirname'] . '/' . $file_info['filename'] . '.webp';
+        
+        if (!file_exists($webp_path)) {
+            $pending++;
+            $total_size += $file->getSize();
+        }
+    }
+    
+    return array(
+        'count' => $pending,
+        'total_size' => $total_size,
+        'total_size_formatted' => size_format($total_size)
+    );
+}

@@ -1,0 +1,275 @@
+/*
+ * Assets Optimization Styles
+ * 
+ * Styles for optimized asset loading and Core Web Vitals
+ * 
+ * @package SNN-BRX-WIL
+ * @since 1.0.0
+ */
+
+/* ========================================
+   CRITICAL CSS FOR CORE WEB VITALS
+   ======================================== */
+
+/* Prevent layout shift with font loading */
+@font-face {
+    font-display: swap;
+}
+
+/* Ensure images don't cause layout shift */
+img {
+    max-width: 100%;
+    height: auto;
+    display: block;
+}
+
+/* Optimize font rendering */
+body {
+    font-display: swap;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* Smooth scrolling for better UX */
+html {
+    scroll-behavior: smooth;
+}
+
+/* ========================================
+   LAZY RENDERING SECTIONS (Alpine + Content Visibility)
+   ======================================== */
+
+/* 
+   Clase base para el Lazy Render de secciones
+   Esto usa una propiedad CSS moderna que le dice al navegador 
+   "No calcules el layout de esto hasta que esté cerca de la pantalla"
+*/
+.snn-lazy-section {
+    /* Optimización de Navegador (Lo más importante) */
+    content-visibility: auto; 
+    contain-intrinsic-size: 1px 800px; /* Estimado de altura para evitar saltos (CLS) */
+    
+    /* Estado inicial para animación (Alpine) */
+    opacity: 0;
+    transform: translateY(20px);
+    transition: opacity 0.6s ease-out, transform 0.6s ease-out;
+    will-change: opacity, transform;
+}
+
+/* Estado visible activado por Alpine */
+.snn-lazy-section.is-visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+/* Fallback para navegadores antiguos o sin JS */
+.no-js .snn-lazy-section {
+    content-visibility: visible;
+    opacity: 1;
+    transform: none;
+}
+
+/* ========================================
+   LAZY LOADING OPTIMIZATIONS
+   ======================================== */
+
+/* Lazy loading placeholder */
+.lazy-loading {
+    background: #f0f0f0;
+    background-image: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+    background-size: 200% 100%;
+    animation: loading 1.5s infinite;
+}
+
+@keyframes loading {
+    0% {
+        background-position: 200% 0;
+    }
+    100% {
+        background-position: -200% 0;
+    }
+}
+
+/* Intersection Observer fallback */
+.no-js .lazy-loading {
+    display: none;
+}
+
+/* ========================================
+   FONT OPTIMIZATION
+   ======================================== */
+
+/* Preload critical fonts */
+.font-preload {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+/* Font loading states */
+.font-loading {
+    visibility: hidden;
+}
+
+.font-loaded {
+    visibility: visible;
+}
+
+/* ========================================
+   CSS OPTIMIZATION
+   ======================================== */
+
+/* Remove unused CSS classes */
+.unused-css {
+    display: none !important;
+}
+
+/* Critical CSS injection */
+.critical-css {
+    display: block;
+}
+
+/* ========================================
+   JAVASCRIPT OPTIMIZATION
+   ======================================== */
+
+/* Defer non-critical JavaScript */
+.defer-js {
+    display: none;
+}
+
+/* JavaScript loaded state */
+.js-loaded .defer-js {
+    display: block;
+}
+
+/* ========================================
+   THIRD-PARTY OPTIMIZATION
+   ======================================== */
+
+/* Optimize Google Analytics */
+.gtag-optimized {
+    display: none;
+}
+
+/* Optimize Facebook Pixel */
+.fb-pixel-optimized {
+    display: none;
+}
+
+/* ========================================
+   RESOURCE HINTS
+   ======================================== */
+
+/* DNS prefetch optimization */
+.dns-prefetch {
+    display: none;
+}
+
+/* Preconnect optimization */
+.preconnect {
+    display: none;
+}
+
+/* ========================================
+   PERFORMANCE MONITORING
+   ======================================== */
+
+/* Core Web Vitals indicators */
+.lcp-indicator {
+    position: fixed;
+    top: 10px;
+    right: 10px;
+    background: #2271b1;
+    color: white;
+    padding: 5px 10px;
+    border-radius: 3px;
+    font-size: 12px;
+    z-index: 9999;
+}
+
+.cls-indicator {
+    position: fixed;
+    top: 40px;
+    right: 10px;
+    background: #2271b1;
+    color: white;
+    padding: 5px 10px;
+    border-radius: 3px;
+    font-size: 12px;
+    z-index: 9999;
+}
+
+.fid-indicator {
+    position: fixed;
+    top: 70px;
+    right: 10px;
+    background: #2271b1;
+    color: white;
+    padding: 5px 10px;
+    border-radius: 3px;
+    font-size: 12px;
+    z-index: 9999;
+}
+
+/* ========================================
+   RESPONSIVE OPTIMIZATIONS
+   ======================================== */
+
+/* Mobile-first approach */
+@media (max-width: 768px) {
+    .lcp-indicator,
+    .cls-indicator,
+    .fid-indicator {
+        display: none;
+    }
+}
+
+/* ========================================
+   ACCESSIBILITY OPTIMIZATIONS
+   ======================================== */
+
+/* Reduce motion for accessibility */
+@media (prefers-reduced-motion: reduce) {
+    html {
+        scroll-behavior: auto;
+    }
+    
+    .lazy-loading {
+        animation: none;
+    }
+    
+    .snn-lazy-section {
+        transition: none;
+        opacity: 1;
+        transform: none;
+    }
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+    .lazy-loading {
+        background: #000;
+        color: #fff;
+    }
+}
+
+/* ========================================
+   PRINT OPTIMIZATIONS
+   ======================================== */
+
+@media print {
+    .lcp-indicator,
+    .cls-indicator,
+    .fid-indicator {
+        display: none;
+    }
+    
+    .lazy-loading {
+        display: none;
+    }
+    
+    .snn-lazy-section {
+        content-visibility: visible;
+        opacity: 1;
+        transform: none;
+    }
+}
