@@ -22,19 +22,88 @@ function snn_save_webp_settings() {
     }
     
     if (isset($_POST['snn_save_webp_settings']) && check_admin_referer('snn_webp_settings_nonce', 'snn_webp_settings_nonce')) {
-        // Save WebP options
-        if (isset($_POST['snn_webp_options'])) {
-            // Create temporary instance to access sanitize method
-            $temp_optimizer = new SNN_WebP_Image_Optimizer();
-            $sanitized = $temp_optimizer->sanitize_options($_POST['snn_webp_options']);
-            update_option('snn_webp_options', $sanitized);
+        // Save WebP options - always process even if empty to handle unchecked checkboxes
+        $post_options = isset($_POST['snn_webp_options']) ? $_POST['snn_webp_options'] : array();
+        
+        // Get current options to preserve existing values
+        $current_options = get_option('snn_webp_options', array());
+        
+        // Merge POST data with current options (POST takes precedence)
+        $merged_options = array_merge($current_options, $post_options);
+        
+        // List of all checkbox fields
+        $checkbox_fields = array('enable_webp', 'enable_preload', 'enable_lazy_loading', 'enable_placeholder', 'convert_all_sizes', 'auto_serve_webp');
+        
+        // Set unchecked checkboxes to 0 explicitly (if not in POST, they are unchecked)
+        foreach ($checkbox_fields as $field) {
+            if (!isset($post_options[$field])) {
+                $merged_options[$field] = 0;
+            } else {
+                // Ensure checked checkboxes are set to 1 (not string "1")
+                $merged_options[$field] = 1;
+            }
         }
         
-        // Save Image Optimizer options
-        if (isset($_POST['snn_image_optimizer_options'])) {
-            $temp_auto_optimizer = new SNN_Image_Auto_Optimizer();
-            $sanitized = $temp_auto_optimizer->sanitize_options($_POST['snn_image_optimizer_options']);
-            update_option('snn_image_optimizer_options', $sanitized);
+        // Create temporary instance to access sanitize method
+        $temp_optimizer = new SNN_WebP_Image_Optimizer();
+        $sanitized = $temp_optimizer->sanitize_options($merged_options);
+        
+        // Force update - delete first to ensure clean state
+        delete_option('snn_webp_options');
+        $result = update_option('snn_webp_options', $sanitized, false);
+        
+        // Debug: Log what was saved (temporary)
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log('SNN WebP Options Saved: ' . print_r($sanitized, true));
+        }
+        
+        // Save Image Optimizer options - always process even if empty to handle unchecked checkboxes
+        $post_image_options = isset($_POST['snn_image_optimizer_options']) ? $_POST['snn_image_optimizer_options'] : array();
+        
+        // Get current options to preserve existing values
+        $current_image_options = get_option('snn_image_optimizer_options', array());
+        
+        // Merge POST data with current options (POST takes precedence)
+        $merged_image_options = array_merge($current_image_options, $post_image_options);
+        
+        // List of all checkbox fields for Image Optimizer
+        $checkbox_fields = array('enable_auto_optimization');
+        
+        // Set unchecked checkboxes to 0 explicitly (if not in POST, they are unchecked)
+        foreach ($checkbox_fields as $field) {
+            if (!isset($post_image_options[$field])) {
+                $merged_image_options[$field] = 0;
+            } else {
+                // Ensure checked checkboxes are set to 1 (not string "1")
+                $merged_image_options[$field] = 1;
+            }
+        }
+        
+        $temp_auto_optimizer = new SNN_Image_Auto_Optimizer();
+        $sanitized = $temp_auto_optimizer->sanitize_options($merged_image_options);
+        
+        // Force update - delete first to ensure clean state
+        delete_option('snn_image_optimizer_options');
+        $result = update_option('snn_image_optimizer_options', $sanitized, false);
+        
+        // Debug: Log what was saved (temporary)
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log('SNN Image Optimizer Options Saved: ' . print_r($sanitized, true));
+        }
+        
+        // Clear any object cache that might interfere
+        wp_cache_delete('snn_webp_options', 'options');
+        wp_cache_delete('snn_image_optimizer_options', 'options');
+        wp_cache_flush(); // Flush all cache
+        
+        // Verify what was actually saved
+        $verify_webp = get_option('snn_webp_options', array());
+        $verify_image = get_option('snn_image_optimizer_options', array());
+        
+        // Debug: Log what was read back (temporary)
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log('SNN WebP Options Read Back: ' . print_r($verify_webp, true));
+            error_log('SNN Image Optimizer Options Read Back: ' . print_r($verify_image, true));
         }
         
         // Redirect to prevent resubmission

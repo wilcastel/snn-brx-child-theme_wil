@@ -2052,7 +2052,9 @@ class SNN_WebP_Image_Optimizer {
      * Field callbacks
      */
     public function enable_webp_callback() {
-        $enabled = isset($this->options['enable_webp']) ? $this->options['enable_webp'] : true;
+        // Recargar opciones para asegurar que tenemos los valores más recientes
+        $current_options = get_option('snn_webp_options', array());
+        $enabled = isset($current_options['enable_webp']) && (int)$current_options['enable_webp'] === 1 ? 1 : 0;
         
         // Check if Cloudflare is detected
         $has_cloudflare = false;
@@ -2090,19 +2092,25 @@ class SNN_WebP_Image_Optimizer {
     }
     
     public function enable_preload_callback() {
-        $enabled = isset($this->options['enable_preload']) ? $this->options['enable_preload'] : true;
+        // Recargar opciones para asegurar que tenemos los valores más recientes
+        $current_options = get_option('snn_webp_options', array());
+        $enabled = isset($current_options['enable_preload']) && (int)$current_options['enable_preload'] === 1 ? 1 : 0;
         echo '<input type="checkbox" name="snn_webp_options[enable_preload]" value="1" ' . checked(1, $enabled, false) . ' />';
         echo '<p class="description">' . __('Preload critical images for faster loading.', 'snn') . '</p>';
     }
     
     public function enable_lazy_loading_callback() {
-        $enabled = isset($this->options['enable_lazy_loading']) ? $this->options['enable_lazy_loading'] : true;
+        // Recargar opciones para asegurar que tenemos los valores más recientes
+        $current_options = get_option('snn_webp_options', array());
+        $enabled = isset($current_options['enable_lazy_loading']) && (int)$current_options['enable_lazy_loading'] === 1 ? 1 : 0;
         echo '<input type="checkbox" name="snn_webp_options[enable_lazy_loading]" value="1" ' . checked(1, $enabled, false) . ' />';
         echo '<p class="description">' . __('Enable lazy loading for non-critical images.', 'snn') . '</p>';
     }
     
     public function enable_placeholder_callback() {
-        $enabled = isset($this->options['enable_placeholder']) ? $this->options['enable_placeholder'] : true;
+        // Recargar opciones para asegurar que tenemos los valores más recientes
+        $current_options = get_option('snn_webp_options', array());
+        $enabled = isset($current_options['enable_placeholder']) && (int)$current_options['enable_placeholder'] === 1 ? 1 : 0;
         echo '<input type="checkbox" name="snn_webp_options[enable_placeholder]" value="1" ' . checked(1, $enabled, false) . ' />';
         echo '<p class="description">' . __('Show placeholder images while loading.', 'snn') . '</p>';
     }
@@ -2120,13 +2128,17 @@ class SNN_WebP_Image_Optimizer {
     }
     
     public function convert_all_sizes_callback() {
-        $enabled = isset($this->options['convert_all_sizes']) ? $this->options['convert_all_sizes'] : true;
+        // Recargar opciones para asegurar que tenemos los valores más recientes
+        $current_options = get_option('snn_webp_options', array());
+        $enabled = isset($current_options['convert_all_sizes']) && (int)$current_options['convert_all_sizes'] === 1 ? 1 : 0;
         echo '<input type="checkbox" name="snn_webp_options[convert_all_sizes]" value="1" ' . checked(1, $enabled, false) . ' />';
         echo '<p class="description">' . __('Convert all WordPress image sizes (thumbnail, medium, large, etc.) to WebP. Recommended for better Core Web Vitals.', 'snn') . '</p>';
     }
     
     public function auto_serve_webp_callback() {
-        $enabled = isset($this->options['auto_serve_webp']) ? $this->options['auto_serve_webp'] : true;
+        // Recargar opciones para asegurar que tenemos los valores más recientes
+        $current_options = get_option('snn_webp_options', array());
+        $enabled = isset($current_options['auto_serve_webp']) && (int)$current_options['auto_serve_webp'] === 1 ? 1 : 0;
         echo '<input type="checkbox" name="snn_webp_options[auto_serve_webp]" value="1" ' . checked(1, $enabled, false) . ' />';
         echo '<p class="description">' . __('Automatically serve WebP images when available. Fixes 404 errors for converted images.', 'snn') . '</p>';
     }
@@ -2137,17 +2149,18 @@ class SNN_WebP_Image_Optimizer {
     public function sanitize_options($input) {
         $sanitized = array();
         
-        $sanitized['enable_webp'] = isset($input['enable_webp']) ? 1 : 0;
+        // Checkboxes: check the value, not just if key exists (0 means unchecked, 1 means checked)
+        $sanitized['enable_webp'] = (isset($input['enable_webp']) && (int)$input['enable_webp'] === 1) ? 1 : 0;
         $sanitized['webp_quality'] = intval($input['webp_quality'] ?? 80);
         $sanitized['max_width'] = intval($input['max_width'] ?? 1920);
         $sanitized['max_height'] = intval($input['max_height'] ?? 1080);
-        $sanitized['enable_preload'] = isset($input['enable_preload']) ? 1 : 0;
-        $sanitized['enable_lazy_loading'] = isset($input['enable_lazy_loading']) ? 1 : 0;
-        $sanitized['enable_placeholder'] = isset($input['enable_placeholder']) ? 1 : 0;
+        $sanitized['enable_preload'] = (isset($input['enable_preload']) && (int)$input['enable_preload'] === 1) ? 1 : 0;
+        $sanitized['enable_lazy_loading'] = (isset($input['enable_lazy_loading']) && (int)$input['enable_lazy_loading'] === 1) ? 1 : 0;
+        $sanitized['enable_placeholder'] = (isset($input['enable_placeholder']) && (int)$input['enable_placeholder'] === 1) ? 1 : 0;
         $sanitized['critical_images'] = sanitize_textarea_field($input['critical_images'] ?? '');
         $sanitized['batch_size'] = intval($input['batch_size'] ?? 50);
-        $sanitized['convert_all_sizes'] = isset($input['convert_all_sizes']) ? 1 : 0;
-        $sanitized['auto_serve_webp'] = isset($input['auto_serve_webp']) ? 1 : 0;
+        $sanitized['convert_all_sizes'] = (isset($input['convert_all_sizes']) && (int)$input['convert_all_sizes'] === 1) ? 1 : 0;
+        $sanitized['auto_serve_webp'] = (isset($input['auto_serve_webp']) && (int)$input['auto_serve_webp'] === 1) ? 1 : 0;
         
         return $sanitized;
     }

@@ -415,7 +415,9 @@ class SNN_Image_Auto_Optimizer {
      * Field callbacks
      */
     public function enable_auto_optimization_callback() {
-        $enabled = isset($this->options['enable_auto_optimization']) ? $this->options['enable_auto_optimization'] : true;
+        // Recargar opciones para asegurar que tenemos los valores más recientes
+        $current_options = get_option('snn_image_optimizer_options', array());
+        $enabled = isset($current_options['enable_auto_optimization']) && (int)$current_options['enable_auto_optimization'] === 1 ? 1 : 0;
         echo '<input type="checkbox" name="snn_image_optimizer_options[enable_auto_optimization]" value="1" ' . checked(1, $enabled, false) . ' />';
         echo '<p class="description">' . __('Automatically resize images larger than max dimensions and optimize file size.', 'snn') . '</p>';
     }
@@ -449,7 +451,8 @@ class SNN_Image_Auto_Optimizer {
      */
     public function sanitize_options($input) {
         $sanitized = array();
-        $sanitized['enable_auto_optimization'] = isset($input['enable_auto_optimization']) ? 1 : 0;
+        // Checkbox: check the value, not just if key exists (0 means unchecked, 1 means checked)
+        $sanitized['enable_auto_optimization'] = (isset($input['enable_auto_optimization']) && (int)$input['enable_auto_optimization'] === 1) ? 1 : 0;
         $sanitized['max_file_size_mb'] = floatval($input['max_file_size_mb'] ?? 1);
         $sanitized['max_width'] = intval($input['max_width'] ?? 2560);
         $sanitized['max_height'] = intval($input['max_height'] ?? 2560);
