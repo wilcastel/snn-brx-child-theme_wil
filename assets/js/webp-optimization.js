@@ -159,21 +159,61 @@
     // WebP Fallback Handler
     class WebPFallbackHandler {
         constructor() {
-            this.init();
+            // Wait for WebP detection to complete
+            detectWebPSupport().then((supported) => {
+                if (!supported) {
+                    this.init();
+                }
+            });
         }
 
         init() {
-            // Handle WebP fallback for older browsers
-            if (!document.documentElement.classList.contains('webp')) {
-                this.handleFallback();
-            }
+            // Only handle fallback if WebP is NOT supported
+            // Wait a bit to ensure WebP detection has completed
+            setTimeout(() => {
+                if (!document.documentElement.classList.contains('webp')) {
+                    this.handleFallback();
+                }
+            }, 100);
         }
 
         handleFallback() {
-            // Replace WebP images with fallback versions
+            // Replace WebP images with fallback versions only if JPG exists
             document.querySelectorAll('img[src*=".webp"]').forEach(img => {
-                const fallbackSrc = img.src.replace('.webp', '.jpg');
-                img.src = fallbackSrc;
+                const originalSrc = img.src;
+                // Try multiple fallback extensions
+                const fallbackExtensions = ['.jpg', '.jpeg', '.png'];
+                let fallbackFound = false;
+                
+                // Check each fallback extension
+                for (const ext of fallbackExtensions) {
+                    const fallbackSrc = originalSrc.replace(/\.webp$/i, ext);
+                    
+                    // Verify the fallback image exists before replacing
+                    const testImg = new Image();
+                    testImg.onload = () => {
+                        if (!fallbackFound) {
+                            fallbackFound = true;
+                            img.src = fallbackSrc;
+                            // Also update srcset if present
+                            if (img.srcset) {
+                                img.srcset = img.srcset.replace(/\.webp/gi, ext);
+                            }
+                        }
+                    };
+                    testImg.onerror = () => {
+                        // Fallback doesn't exist, try next extension
+                    };
+                    testImg.src = fallbackSrc;
+                }
+                
+                // If no fallback found after a delay, keep WebP (browser might handle it)
+                setTimeout(() => {
+                    if (!fallbackFound && img.src === originalSrc) {
+                        // WebP might work anyway, or we'll let the browser handle the error
+                        console.warn('No fallback found for WebP image:', originalSrc);
+                    }
+                }, 500);
             });
         }
     }
