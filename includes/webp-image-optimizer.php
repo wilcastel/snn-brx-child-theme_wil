@@ -1550,8 +1550,10 @@ class SNN_WebP_Image_Optimizer {
             return false;
         }
         
-        $upload_url = $this->upload_dir['baseurl'];
-        $upload_basedir = $this->upload_dir['basedir'];
+        // Asegurar que upload_dir está actualizado (puede cambiar si UPLOADS está definido)
+        $current_upload_dir = wp_upload_dir();
+        $upload_url = $current_upload_dir['baseurl'];
+        $upload_basedir = $current_upload_dir['basedir'];
         
         // Normalizar URL - puede venir como URL completa o relativa
         $image_url_clean = $image_url;
@@ -1572,10 +1574,14 @@ class SNN_WebP_Image_Optimizer {
             $relative_path = str_replace($upload_url, '', $image_url_clean);
             $is_from_uploads = true;
         }
-        // Caso 2: Contiene /wp-content/uploads/
+        // Caso 2: Contiene /wp-content/uploads/ (convertir a estructura personalizada si aplica)
         elseif (preg_match('#/wp-content/uploads/(.+)$#', $image_url_clean, $matches)) {
             $relative_path = $matches[1];
             $is_from_uploads = true;
+            // Si upload_url no contiene /wp-content/uploads/, significa que hay carpeta personalizada
+            // La ruta relativa ya está correcta (ej: 2025/08/banner.jpg)
+            // upload_basedir ya apunta a la carpeta correcta (ej: /path/to/fotoedicion)
+            // Así que la búsqueda del archivo WebP funcionará correctamente
         }
         // Caso 3: Contiene /fotoedicion/ (estructura personalizada)
         elseif (preg_match('#/(fotoedicion/.+)$#', $image_url_clean, $matches)) {
@@ -1640,12 +1646,27 @@ class SNN_WebP_Image_Optimizer {
         
         // Verificar que el archivo WebP existe
         if (file_exists($webp_path)) {
-            // Construir URL WebP
+            // Construir URL WebP respetando la estructura de carpetas personalizada
             if ($is_full_url) {
-                // URL completa, reemplazar extensión manteniendo estructura
-                return preg_replace('/\.(jpg|jpeg|png)$/i', '.webp', $image_url);
+                // URL completa: reemplazar extensión y también la estructura de carpetas si es necesario
+                $webp_url = preg_replace('/\.(jpg|jpeg|png)$/i', '.webp', $image_url);
+                
+                // Si la URL original contenía /wp-content/uploads/ pero upload_url es diferente (ej: /fotoedicion/)
+                // Reemplazar la estructura de carpetas también
+                if (strpos($image_url, '/wp-content/uploads/') !== false && strpos($upload_url, '/wp-content/uploads/') === false) {
+                    // Extraer el dominio y protocolo
+                    if (preg_match('#^(https?://[^/]+)(/.+)$#', $webp_url, $url_parts)) {
+                        $domain = $url_parts[1];
+                        $path = $url_parts[2];
+                        // Reemplazar /wp-content/uploads/ con la estructura correcta
+                        $path = preg_replace('#/wp-content/uploads/#', rtrim($upload_url, '/') . '/', $path);
+                        $webp_url = $domain . $path;
+                    }
+                }
+                
+                return $webp_url;
             } else {
-                // Ruta relativa, construir URL completa
+                // Ruta relativa, construir URL completa usando upload_url (que respeta la carpeta personalizada)
                 return $upload_url . '/' . $webp_relative_path;
             }
         }
@@ -1774,6 +1795,11 @@ class SNN_WebP_Image_Optimizer {
                 $quote_before = $matches[1];
                 $image_url = $matches[2];
                 $quote_after = isset($matches[4]) ? $matches[4] : '';
+                
+                // NO reemplazar si ya es WebP (por seguridad)
+                if (preg_match('/\.webp$/i', $image_url)) {
+                    return $matches[0]; // Ya es WebP, no reemplazar
+                }
                 
                 // NO reemplazar placeholders (data:image/svg+xml o data:image/svg)
                 if (strpos($image_url, 'data:image/svg') === 0) {
