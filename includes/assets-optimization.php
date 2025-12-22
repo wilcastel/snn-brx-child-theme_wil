@@ -89,12 +89,16 @@ class SNN_Assets_Optimization {
         }
 
         // Alpine Intersect Plugin (Must load BEFORE Alpine Core)
+        // Construir URL dinámicamente usando la URL del sitio
+        $upload_dir = wp_upload_dir();
+        $alpine_url = $upload_dir['baseurl'] . '/js/ialpine.min.js';
+        
         wp_enqueue_script(
             'alpine-intersect',
-            'https://lanacion.test/fotoedicion/js/ialpine.min.js',
+            $alpine_url,
             array(),
             '3.13.5',
-            false // Load in head
+            true // Load in footer (defer se agrega después)
         );
         
         // Add defer attribute to alpine-intersect

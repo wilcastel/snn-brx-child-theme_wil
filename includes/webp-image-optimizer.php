@@ -1570,8 +1570,23 @@ class SNN_WebP_Image_Optimizer {
         $is_from_uploads = false;
         
         // Caso 1: Contiene upload_url base
-        if (strpos($image_url_clean, $upload_url) !== false) {
+        // Normalizar upload_url para comparación (puede ser completa o relativa)
+        $upload_url_for_comparison = $upload_url;
+        if (strpos($upload_url, 'http') === 0) {
+            // Si upload_url es completa, extraer solo la ruta para comparación con image_url_clean
+            if (preg_match('#https?://[^/]+(/.+)$#', $upload_url, $upload_matches)) {
+                $upload_url_for_comparison = $upload_matches[1];
+            }
+        }
+        
+        if (strpos($image_url_clean, $upload_url_for_comparison) !== false) {
+            $relative_path = str_replace($upload_url_for_comparison, '', $image_url_clean);
+            $relative_path = ltrim($relative_path, '/');
+            $is_from_uploads = true;
+        } elseif (strpos($image_url_clean, $upload_url) !== false && strpos($upload_url, 'http') !== 0) {
+            // Fallback: si upload_url es relativa y está en la URL
             $relative_path = str_replace($upload_url, '', $image_url_clean);
+            $relative_path = ltrim($relative_path, '/');
             $is_from_uploads = true;
         }
         // Caso 2: Contiene /wp-content/uploads/ (convertir a estructura personalizada si aplica)
@@ -1654,20 +1669,56 @@ class SNN_WebP_Image_Optimizer {
                 // Si la URL original contenía /wp-content/uploads/ pero upload_url es diferente (ej: /fotoedicion/)
                 // Reemplazar la estructura de carpetas también
                 if (strpos($image_url, '/wp-content/uploads/') !== false && strpos($upload_url, '/wp-content/uploads/') === false) {
-                    // Extraer el dominio y protocolo
-                    if (preg_match('#^(https?://[^/]+)(/.+)$#', $webp_url, $url_parts)) {
-                        $domain = $url_parts[1];
-                        $path = $url_parts[2];
-                        // Reemplazar /wp-content/uploads/ con la estructura correcta
-                        $path = preg_replace('#/wp-content/uploads/#', rtrim($upload_url, '/') . '/', $path);
-                        $webp_url = $domain . $path;
+                    // Extraer el dominio y protocolo de la URL original
+                    if (preg_match('#^(https?://[^/]+)(/.+)$#', $image_url, $original_parts)) {
+                        $domain = $original_parts[1];
+                        $original_path = $original_parts[2];
+                        
+                        // Extraer solo la ruta relativa (sin /wp-content/uploads/)
+                        if (preg_match('#/wp-content/uploads/(.+)$#', $original_path, $path_matches)) {
+                            $relative_path = $path_matches[1];
+                            
+                            // Construir nueva URL usando el dominio original y la estructura correcta
+                            // upload_url puede ser relativa (/fotoedicion) o completa (https://site.com/fotoedicion)
+                            if (strpos($upload_url, 'http') === 0) {
+                                // upload_url es completa, extraer solo la ruta
+                                if (preg_match('#https?://[^/]+(/.+)$#', $upload_url, $upload_parts)) {
+                                    $upload_path = rtrim($upload_parts[1], '/');
+                                    $webp_url = $domain . $upload_path . '/' . preg_replace('/\.(jpg|jpeg|png)$/i', '.webp', $relative_path);
+                                } else {
+                                    $webp_url = preg_replace('/\.(jpg|jpeg|png)$/i', '.webp', $image_url);
+                                }
+                            } else {
+                                // upload_url es relativa (ej: /fotoedicion)
+                                $upload_path = rtrim($upload_url, '/');
+                                $webp_url = $domain . $upload_path . '/' . preg_replace('/\.(jpg|jpeg|png)$/i', '.webp', $relative_path);
+                            }
+                        }
                     }
                 }
                 
                 return $webp_url;
             } else {
                 // Ruta relativa, construir URL completa usando upload_url (que respeta la carpeta personalizada)
-                return $upload_url . '/' . $webp_relative_path;
+                // upload_url puede ser relativa (/fotoedicion) o completa (https://site.com/fotoedicion)
+                if (strpos($upload_url, 'http') === 0) {
+                    // upload_url es completa, usar directamente
+                    $upload_url_clean = rtrim($upload_url, '/');
+                    $webp_path_clean = ltrim($webp_relative_path, '/');
+                    return $upload_url_clean . '/' . $webp_path_clean;
+                } else {
+                    // upload_url es relativa, construir URL completa
+                    $domain = '';
+                    if ($is_full_url && preg_match('#^(https?://[^/]+)#', $image_url, $domain_match)) {
+                        $domain = $domain_match[1];
+                    } else {
+                        // Usar home_url como fallback
+                        $domain = home_url();
+                    }
+                    $upload_url_clean = rtrim($upload_url, '/');
+                    $webp_path_clean = ltrim($webp_relative_path, '/');
+                    return $domain . $upload_url_clean . '/' . $webp_path_clean;
+                }
             }
         }
         
@@ -1775,7 +1826,9 @@ class SNN_WebP_Image_Optimizer {
         // Las imágenes con data-src ya tienen su placeholder aplicado
         // Solo reemplazar URLs en src, srcset, background-image que NO sean placeholders
         
-        $upload_baseurl = $this->upload_dir['baseurl'];
+        // Asegurar que upload_dir está actualizado (puede cambiar si UPLOADS está definido)
+        $current_upload_dir = wp_upload_dir();
+        $upload_baseurl = $current_upload_dir['baseurl'];
         
         // Patrón para encontrar URLs de imágenes en el HTML
         // Busca src, srcset, data-src, background-image, etc.
