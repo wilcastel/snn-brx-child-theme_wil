@@ -625,9 +625,17 @@ function bl_maybe_run_cached_query( $results, $query_obj ) {
     // IMPORTANTE: Solo el primer loop (master) crea el caché y puede definir posts_per_page
     if ( !isset( $bl_cached_queries_storage['posts'][$cache_id] ) ) {
         // Este es el loop master - puede definir posts_per_page para la query base
-        // Si el loop master tiene posts_per_page en sus argumentos, usarlo
-        // Si no, usar -1 (todos los posts)
-        $master_posts_per_page = ( $posts_per_page !== null && $posts_per_page > 0 ) ? $posts_per_page : -1;
+        // OPTIMIZACIÓN: Limitar cantidad máxima de posts para evitar alto consumo de CPU
+        // Si no se especifica posts_per_page, usar un límite razonable (100 posts)
+        $max_posts_limit = apply_filters( 'bl_cached_query_max_posts', 100 );
+        
+        if ( $posts_per_page !== null && $posts_per_page > 0 ) {
+            // Si se especifica un límite, respetarlo pero con máximo
+            $master_posts_per_page = min( $posts_per_page, $max_posts_limit );
+        } else {
+            // Si no se especifica, usar el límite máximo (no -1 para evitar traer TODOS los posts)
+            $master_posts_per_page = $max_posts_limit;
+        }
         
         // Aplicar posts_per_page del master a la query base
         $query_args['posts_per_page'] = $master_posts_per_page;

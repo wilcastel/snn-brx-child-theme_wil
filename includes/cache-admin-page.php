@@ -105,14 +105,44 @@ function snn_cache_admin_page_callback() {
         }
     }
     
-    // Obtener estadísticas
+    // Obtener estadísticas con mejor diagnóstico
     $redis_stats = false;
     $redis_available = false;
+    $redis_diagnostic = [];
     
-    if ( function_exists( 'snn_redis_is_available' ) ) {
-        $redis_available = snn_redis_is_available();
-        if ( $redis_available && function_exists( 'snn_redis_get_stats' ) ) {
-            $redis_stats = snn_redis_get_stats();
+    // Verificar si la clase Redis existe
+    if ( !class_exists( 'Redis' ) ) {
+        $redis_diagnostic[] = '❌ Clase Redis no disponible (php-redis no instalado)';
+    } else {
+        $redis_diagnostic[] = '✅ Clase Redis disponible';
+        
+        // Verificar constantes de configuración
+        if ( !defined( 'REDIS_HOST' ) ) {
+            $redis_diagnostic[] = '⚠️ REDIS_HOST no definido en wp-config.php';
+        } else {
+            $redis_diagnostic[] = '✅ REDIS_HOST: ' . REDIS_HOST;
+        }
+        
+        if ( !defined( 'REDIS_PORT' ) ) {
+            $redis_diagnostic[] = '⚠️ REDIS_PORT no definido en wp-config.php';
+        } else {
+            $redis_diagnostic[] = '✅ REDIS_PORT: ' . REDIS_PORT;
+        }
+        
+        // Intentar conectar
+        if ( function_exists( 'snn_redis_is_available' ) ) {
+            $redis_available = snn_redis_is_available();
+            if ( $redis_available ) {
+                $redis_diagnostic[] = '✅ Conexión exitosa';
+                if ( function_exists( 'snn_redis_get_stats' ) ) {
+                    $redis_stats = snn_redis_get_stats();
+                }
+            } else {
+                $redis_diagnostic[] = '❌ No se pudo conectar a Redis';
+                $redis_diagnostic[] = '💡 Verifica que Redis esté corriendo: redis-cli ping';
+            }
+        } else {
+            $redis_diagnostic[] = '❌ Función snn_redis_is_available no disponible';
         }
     }
     
@@ -155,24 +185,35 @@ function snn_cache_admin_page_callback() {
                                 Hits: <?php echo esc_html( number_format( $redis_stats['keyspace_hits'] ) ); ?> | 
                                 Misses: <?php echo esc_html( number_format( $redis_stats['keyspace_misses'] ) ); ?>
                             <?php else: ?>
-                                No hay estadísticas disponibles
+                                <details>
+                                    <summary style="cursor: pointer; color: #0073aa;">Ver diagnóstico</summary>
+                                    <ul style="margin-top: 10px;">
+                                        <?php foreach ( $redis_diagnostic as $msg ): ?>
+                                            <li><?php echo esc_html( $msg ); ?></li>
+                                        <?php endforeach; ?>
+                                    </ul>
+                                </details>
                             <?php endif; ?>
                         </td>
                     </tr>
                     <tr>
                         <td><strong>Varnish</strong></td>
                         <td>
-                            <?php if ( function_exists( 'varnish_http_purge' ) ): ?>
+                            <?php 
+                            $varnish_available = function_exists( 'varnish_http_purge' ) || function_exists( 'snn_purge_varnish_urls' );
+                            if ( $varnish_available ): ?>
                                 <span style="color: green;">✅ Disponible</span>
                             <?php else: ?>
-                                <span style="color: orange;">⚠️ Plugin no detectado</span>
+                                <span style="color: orange;">⚠️ Limpieza manual desde CloudPanel</span>
                             <?php endif; ?>
                         </td>
                         <td>
                             <?php if ( function_exists( 'varnish_http_purge' ) ): ?>
-                                Función de limpieza disponible
+                                Función de limpieza disponible (plugin)
+                            <?php elseif ( function_exists( 'snn_purge_varnish_urls' ) ): ?>
+                                Limpieza disponible vía HTTP PURGE (sin plugin)
                             <?php else: ?>
-                                Instala un plugin de Varnish o configura la limpieza manualmente
+                                Limpia manualmente desde CloudPanel → Varnish Cache → Purge Cache
                             <?php endif; ?>
                         </td>
                     </tr>

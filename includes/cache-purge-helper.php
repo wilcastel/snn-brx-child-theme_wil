@@ -58,24 +58,39 @@ function snn_purge_varnish_urls( $urls ) {
                 $purged++;
             }
         } else {
-            // Fallback: hacer request HTTP PURGE directamente
+            // Fallback: hacer request HTTP PURGE directamente (sin plugin)
+            // Nota: Esto requiere que Varnish esté configurado para aceptar PURGE desde localhost
+            if ( !function_exists( 'curl_init' ) ) {
+                // Si curl no está disponible, no podemos hacer PURGE automático
+                continue;
+            }
+            
             $parsed_url = parse_url( $url );
-            $host = isset( $parsed_url['host'] ) ? $parsed_url['host'] : $_SERVER['HTTP_HOST'];
+            $host = isset( $parsed_url['host'] ) ? $parsed_url['host'] : ( isset( $_SERVER['HTTP_HOST'] ) ? $_SERVER['HTTP_HOST'] : 'localhost' );
+            $scheme = isset( $parsed_url['scheme'] ) ? $parsed_url['scheme'] : 'http';
             $path = isset( $parsed_url['path'] ) ? $parsed_url['path'] : '/';
             
-            $ch = curl_init( $url );
+            // Construir URL completa
+            $full_url = $scheme . '://' . $host . $path;
+            
+            $ch = curl_init( $full_url );
             curl_setopt( $ch, CURLOPT_CUSTOMREQUEST, 'PURGE' );
             curl_setopt( $ch, CURLOPT_RETURNTRANSFER, true );
+            curl_setopt( $ch, CURLOPT_TIMEOUT, 2 );
+            curl_setopt( $ch, CURLOPT_CONNECTTIMEOUT, 1 );
             curl_setopt( $ch, CURLOPT_HTTPHEADER, [
                 'Host: ' . $host,
             ] );
             
             $response = curl_exec( $ch );
             $http_code = curl_getinfo( $ch, CURLINFO_HTTP_CODE );
+            $curl_error = curl_error( $ch );
             curl_close( $ch );
             
             if ( $http_code === 200 || $http_code === 204 ) {
                 $purged++;
+            } elseif ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+                error_log( 'SNN Varnish PURGE failed for ' . $full_url . ': HTTP ' . $http_code . ( $curl_error ? ' - ' . $curl_error : '' ) );
             }
         }
     }
