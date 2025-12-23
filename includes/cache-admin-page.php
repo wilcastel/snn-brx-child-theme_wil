@@ -110,39 +110,77 @@ function snn_cache_admin_page_callback() {
     $redis_available = false;
     $redis_diagnostic = [];
     
-    // Verificar si la clase Redis existe
-    if ( !class_exists( 'Redis' ) ) {
-        $redis_diagnostic[] = '❌ Clase Redis no disponible (php-redis no instalado)';
-    } else {
-        $redis_diagnostic[] = '✅ Clase Redis disponible';
+    // Usar función de diagnóstico mejorada si está disponible
+    if ( function_exists( 'snn_redis_get_diagnostic' ) ) {
+        $diagnostic = snn_redis_get_diagnostic();
         
-        // Verificar constantes de configuración
-        if ( !defined( 'REDIS_HOST' ) ) {
-            $redis_diagnostic[] = '⚠️ REDIS_HOST no definido en wp-config.php';
-        } else {
-            $redis_diagnostic[] = '✅ REDIS_HOST: ' . REDIS_HOST;
+        // Construir mensajes de diagnóstico
+        if ( isset( $diagnostic['class_available'] ) ) {
+            $redis_diagnostic[] = $diagnostic['class_available'] 
+                ? '✅ ' . $diagnostic['class_message']
+                : '❌ ' . $diagnostic['class_message'];
         }
         
-        if ( !defined( 'REDIS_PORT' ) ) {
-            $redis_diagnostic[] = '⚠️ REDIS_PORT no definido en wp-config.php';
-        } else {
-            $redis_diagnostic[] = '✅ REDIS_PORT: ' . REDIS_PORT;
+        if ( isset( $diagnostic['host_defined'] ) ) {
+            $redis_diagnostic[] = $diagnostic['host_defined']
+                ? '✅ REDIS_HOST: ' . $diagnostic['host_value']
+                : '⚠️ REDIS_HOST: ' . $diagnostic['host_value'];
         }
         
-        // Intentar conectar
-        if ( function_exists( 'snn_redis_is_available' ) ) {
-            $redis_available = snn_redis_is_available();
-            if ( $redis_available ) {
-                $redis_diagnostic[] = '✅ Conexión exitosa';
+        if ( isset( $diagnostic['port_defined'] ) ) {
+            $redis_diagnostic[] = $diagnostic['port_defined']
+                ? '✅ REDIS_PORT: ' . $diagnostic['port_value']
+                : '⚠️ REDIS_PORT: ' . $diagnostic['port_value'];
+        }
+        
+        if ( isset( $diagnostic['connection_success'] ) ) {
+            if ( $diagnostic['connection_success'] ) {
+                $redis_diagnostic[] = '✅ ' . $diagnostic['connection_message'];
+                if ( isset( $diagnostic['ping_success'] ) && $diagnostic['ping_success'] ) {
+                    $redis_diagnostic[] = '✅ Ping exitoso: ' . ( is_string( $diagnostic['ping_result'] ) ? $diagnostic['ping_result'] : 'OK' );
+                }
+                $redis_available = true;
                 if ( function_exists( 'snn_redis_get_stats' ) ) {
                     $redis_stats = snn_redis_get_stats();
                 }
             } else {
-                $redis_diagnostic[] = '❌ No se pudo conectar a Redis';
-                $redis_diagnostic[] = '💡 Verifica que Redis esté corriendo: redis-cli ping';
+                $redis_diagnostic[] = '❌ ' . $diagnostic['connection_message'];
+                if ( isset( $diagnostic['connection_error'] ) ) {
+                    $redis_diagnostic[] = '💡 ' . $diagnostic['connection_error'];
+                }
             }
+        }
+    } else {
+        // Fallback al método anterior
+        if ( !class_exists( 'Redis' ) ) {
+            $redis_diagnostic[] = '❌ Clase Redis no disponible (php-redis no instalado)';
         } else {
-            $redis_diagnostic[] = '❌ Función snn_redis_is_available no disponible';
+            $redis_diagnostic[] = '✅ Clase Redis disponible';
+            
+            if ( !defined( 'REDIS_HOST' ) ) {
+                $redis_diagnostic[] = '⚠️ REDIS_HOST no definido en wp-config.php';
+            } else {
+                $redis_diagnostic[] = '✅ REDIS_HOST: ' . REDIS_HOST;
+            }
+            
+            if ( !defined( 'REDIS_PORT' ) ) {
+                $redis_diagnostic[] = '⚠️ REDIS_PORT no definido en wp-config.php';
+            } else {
+                $redis_diagnostic[] = '✅ REDIS_PORT: ' . REDIS_PORT;
+            }
+            
+            if ( function_exists( 'snn_redis_is_available' ) ) {
+                $redis_available = snn_redis_is_available();
+                if ( $redis_available ) {
+                    $redis_diagnostic[] = '✅ Conexión exitosa';
+                    if ( function_exists( 'snn_redis_get_stats' ) ) {
+                        $redis_stats = snn_redis_get_stats();
+                    }
+                } else {
+                    $redis_diagnostic[] = '❌ No se pudo conectar a Redis';
+                    $redis_diagnostic[] = '💡 Verifica que Redis esté corriendo: redis-cli ping';
+                }
+            }
         }
     }
     
