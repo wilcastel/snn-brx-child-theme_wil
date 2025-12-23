@@ -87,6 +87,8 @@ if [ "$TRYCODE_EXISTS" = true ]; then
     
     # Actualizar trycode con el código de la rama actual
     info "Actualizando trycode con código de ${CURRENT_BRANCH}..."
+    # Resetear completamente trycode con el código de la rama actual
+    # Esto es seguro porque trycode es una rama de pruebas
     git reset --hard "${CURRENT_BRANCH}"
 else
     info "Creando rama trycode desde ${CURRENT_BRANCH}..."
@@ -133,10 +135,12 @@ info "Commit creado: ${COMMIT_HASH}"
 # Hacer push a trycode si hay remoto configurado
 if git remote -v | grep -q origin; then
     info "Haciendo push a trycode en remoto..."
-    if git push origin trycode; then
-        success "Push exitoso a origin/trycode"
+    # Usar force push porque trycode es una rama de pruebas que se actualiza completamente
+    # Esto sobrescribe cualquier commit anterior en el remoto
+    if git push -f origin trycode; then
+        success "Push exitoso a origin/trycode (force push)"
     else
-        warning "No se pudo hacer push. Puedes hacerlo manualmente con: git push origin trycode"
+        warning "No se pudo hacer push. Puedes hacerlo manualmente con: git push -f origin trycode"
     fi
 else
     warning "No hay remoto configurado. No se puede hacer push automático."
