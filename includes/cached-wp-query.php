@@ -618,15 +618,72 @@ function bl_maybe_run_cached_query( $results, $query_obj ) {
     
     // Obtener el almacenamiento de caché usando variable global directamente
     global $bl_cached_queries_storage;
-    bl_get_cached_queries_storage(); // Asegurar que la variable global esté inicializada
+    
+    // Asegurar que la variable global esté inicializada
+    // IMPORTANTE: No llamar bl_get_cached_queries_storage() aquí porque puede sobrescribir
+    // la variable global si ya tiene datos. En su lugar, inicializarla solo si no existe.
+    if ( !isset( $bl_cached_queries_storage ) ) {
+        bl_get_cached_queries_storage();
+    } else {
+        // Si ya existe, asegurar que tenga la estructura correcta
+        if ( !isset( $bl_cached_queries_storage['posts'] ) ) {
+            $bl_cached_queries_storage['posts'] = [];
+        }
+        if ( !isset( $bl_cached_queries_storage['post_ids'] ) ) {
+            $bl_cached_queries_storage['post_ids'] = [];
+        }
+    }
     
     // OPTIMIZACIÓN: Intentar obtener de Redis si no está en variable global
-    if ( !isset( $bl_cached_queries_storage['posts'][$cache_id] ) && function_exists( 'snn_redis_get' ) ) {
+    $cache_found_in_redis = false;
+    $cache_found_in_global = isset( $bl_cached_queries_storage['posts'][$cache_id] );
+    
+    // Log estado inicial
+    if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+        error_log( 'Cached WP Query: Verificando cache. Cache ID: ' . $cache_id . ', En variable global: ' . ( $cache_found_in_global ? 'Sí' : 'No' ) );
+    }
+    
+    if ( !$cache_found_in_global && function_exists( 'snn_redis_get' ) ) {
         $redis_cache = snn_redis_get( 'bl_cached_query_' . $cache_id, 'cached_queries' );
-        if ( $redis_cache !== false && is_array( $redis_cache ) && isset( $redis_cache['posts'] ) ) {
+        if ( $redis_cache !== false && is_array( $redis_cache ) && isset( $redis_cache['posts'] ) && !empty( $redis_cache['posts'] ) ) {
             // ✅ Cache encontrado en Redis, cargarlo en variable global
-            $bl_cached_queries_storage['posts'][$cache_id] = $redis_cache['posts'];
-            $bl_cached_queries_storage['post_ids'][$cache_id] = isset( $redis_cache['post_ids'] ) ? $redis_cache['post_ids'] : [];
+            // IMPORTANTE: Verificar que los posts sean objetos válidos
+            $valid_posts = [];
+            foreach ( $redis_cache['posts'] as $post ) {
+                // Si el post es un array (deserializado incorrectamente), intentar convertirlo a objeto
+                if ( is_array( $post ) && isset( $post['ID'] ) ) {
+                    // Convertir array a objeto WP_Post
+                    $post_obj = new stdClass();
+                    foreach ( $post as $key => $value ) {
+                        $post_obj->$key = $value;
+                    }
+                    $valid_posts[] = $post_obj;
+                } elseif ( is_object( $post ) && isset( $post->ID ) ) {
+                    $valid_posts[] = $post;
+                }
+            }
+            
+            if ( !empty( $valid_posts ) ) {
+                $bl_cached_queries_storage['posts'][$cache_id] = $valid_posts;
+                $bl_cached_queries_storage['post_ids'][$cache_id] = isset( $redis_cache['post_ids'] ) ? $redis_cache['post_ids'] : array_map( function( $p ) { return is_object( $p ) ? $p->ID : ( is_array( $p ) ? $p['ID'] : 0 ); }, $valid_posts );
+                $cache_found_in_redis = true;
+                
+                // Log para diagnóstico si WP_DEBUG está activo
+                if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+                    error_log( 'Cached WP Query: ✅ Cache cargado desde Redis. Cache ID: ' . $cache_id . ', Posts: ' . count( $valid_posts ) );
+                }
+            } else {
+                // Log si los posts no son válidos
+                if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+                    error_log( 'Cached WP Query: ⚠️ Cache encontrado en Redis pero posts no válidos. Cache ID: ' . $cache_id . ', Posts originales: ' . count( $redis_cache['posts'] ) . ', Posts válidos: 0' );
+                }
+            }
+        } else {
+            // Log si no se encontró en Redis
+            if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+                $redis_result_type = $redis_cache === false ? 'false' : ( is_array( $redis_cache ) ? ( isset( $redis_cache['posts'] ) ? 'array con posts vacío' : 'array sin posts' ) : gettype( $redis_cache ) );
+                error_log( 'Cached WP Query: ❌ Cache NO encontrado en Redis. Cache ID: ' . $cache_id . ', Redis result: ' . $redis_result_type );
+            }
         }
     }
     
@@ -682,7 +739,8 @@ function bl_maybe_run_cached_query( $results, $query_obj ) {
             
             // Log para diagnóstico si WP_DEBUG está activo
             if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
-                error_log( 'Cached WP Query: Cache guardado en Redis. Cache ID: ' . $cache_id . ', Posts: ' . count( $cached_posts ) . ', Storage saved: ' . ( $storage_saved ? 'Sí' : 'No' ) . ', Cache saved: ' . ( $cache_saved ? 'Sí' : 'No' ) );
+                $is_new_cache = !$cache_found_in_redis ? 'NUEVO' : 'RE-CREADO (no debería pasar)';
+                error_log( 'Cached WP Query: Cache guardado en Redis. Cache ID: ' . $cache_id . ', Posts: ' . count( $cached_posts ) . ', Tipo: ' . $is_new_cache . ', Storage saved: ' . ( $storage_saved ? 'Sí' : 'No' ) . ', Cache saved: ' . ( $cache_saved ? 'Sí' : 'No' ) );
             }
         } else {
             // Log si Redis no está disponible
