@@ -644,7 +644,23 @@ function bl_maybe_run_cached_query( $results, $query_obj ) {
     }
     
     if ( !$cache_found_in_global && function_exists( 'snn_redis_get' ) ) {
-        $redis_cache = snn_redis_get( 'bl_cached_query_' . $cache_id, 'cached_queries' );
+        $redis_key = 'bl_cached_query_' . $cache_id;
+        $redis_cache = snn_redis_get( $redis_key, 'cached_queries' );
+        
+        // Log detallado para diagnóstico
+        if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+            $redis_result_type = $redis_cache === false ? 'false' : gettype( $redis_cache );
+            $redis_result_info = '';
+            if ( is_array( $redis_cache ) ) {
+                $redis_result_info = isset( $redis_cache['posts'] ) 
+                    ? ( empty( $redis_cache['posts'] ) ? 'array con posts vacío' : 'array con ' . count( $redis_cache['posts'] ) . ' posts' )
+                    : 'array sin clave posts';
+            } else {
+                $redis_result_info = $redis_result_type;
+            }
+            error_log( 'Cached WP Query: Intentando cargar desde Redis. Key: ' . $redis_key . ', Result: ' . $redis_result_info );
+        }
+        
         if ( $redis_cache !== false && is_array( $redis_cache ) && isset( $redis_cache['posts'] ) && !empty( $redis_cache['posts'] ) ) {
             // ✅ Cache encontrado en Redis, cargarlo en variable global
             // IMPORTANTE: Verificar que los posts sean objetos válidos

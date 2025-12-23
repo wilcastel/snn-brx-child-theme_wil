@@ -209,8 +209,18 @@ function snn_redis_get($key, $group = 'default') {
     
     try {
         $full_key = REDIS_OBJECT_CACHE_PREFIX . $group . ':' . $key;
+        // IMPORTANTE: Redis ya tiene OPT_SERIALIZER_PHP configurado, así que get() ya deserializa automáticamente
+        // NO hacer unserialize() manualmente aquí
         $value = $redis->get($full_key);
-        return $value !== false ? unserialize($value) : false;
+        
+        // Log para diagnóstico si WP_DEBUG está activo
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            $value_type = $value !== false ? gettype($value) : 'false';
+            $value_info = $value !== false && is_array($value) ? (isset($value['posts']) ? 'array con posts' : 'array sin posts') : $value_type;
+            error_log("SNN Redis GET: key='{$full_key}', result_type={$value_info}");
+        }
+        
+        return $value !== false ? $value : false;
     } catch (Exception $e) {
         if (defined('WP_DEBUG') && WP_DEBUG) {
             error_log("SNN Redis GET error: " . $e->getMessage());
@@ -242,12 +252,13 @@ function snn_redis_set($key, $value, $group = 'default', $expiration = 0) {
     
     try {
         $full_key = REDIS_OBJECT_CACHE_PREFIX . $group . ':' . $key;
-        $serialized = serialize($value);
+        // IMPORTANTE: Redis ya tiene OPT_SERIALIZER_PHP configurado, así que set() serializa automáticamente
+        // NO hacer serialize() manualmente aquí para evitar doble serialización
         
         if ($expiration > 0) {
-            return $redis->setex($full_key, $expiration, $serialized);
+            return $redis->setex($full_key, $expiration, $value);
         } else {
-            return $redis->set($full_key, $serialized);
+            return $redis->set($full_key, $value);
         }
     } catch (Exception $e) {
         if (defined('WP_DEBUG') && WP_DEBUG) {
