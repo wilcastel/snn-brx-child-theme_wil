@@ -123,36 +123,90 @@ function bl_setup_query_controls( $control_options ) {
 
 /* Cache estático para almacenar los WP_Query completos */
 // Usar una variable global para poder acceder desde fuera de las funciones
+// OPTIMIZACIÓN: Ahora también usa Redis para persistencia entre requests
 function bl_get_cached_queries_storage() {
     global $bl_cached_queries_storage;
+    
     if ( !isset( $bl_cached_queries_storage ) ) {
-        $bl_cached_queries_storage = [
-            'queries' => [],
-            'posts' => [],      // Almacena los objetos WP_Post completos
-            'post_ids' => [],   // Almacena solo los IDs para referencia rápida
-        ];
+        // Cargar helper de Redis si está disponible
+        if ( !function_exists( 'snn_redis_get' ) ) {
+            $redis_helper = get_stylesheet_directory() . '/includes/redis-cache-helper.php';
+            if ( file_exists( $redis_helper ) ) {
+                require_once $redis_helper;
+            }
+        }
+        
+        // Intentar obtener de Redis primero (persistencia entre requests)
+        $redis_storage = false;
+        if ( function_exists( 'snn_redis_get' ) ) {
+            $redis_storage = snn_redis_get( 'bl_cached_queries_storage', 'cached_queries' );
+        }
+        
+        if ( $redis_storage !== false && is_array( $redis_storage ) ) {
+            // ✅ Cache encontrado en Redis, usarlo
+            $bl_cached_queries_storage = $redis_storage;
+        } else {
+            // ❌ No existe en Redis, crear nuevo storage
+            $bl_cached_queries_storage = [
+                'queries' => [],
+                'posts' => [],      // Almacena los objetos WP_Post completos
+                'post_ids' => [],   // Almacena solo los IDs para referencia rápida
+            ];
+        }
     }
+    
     return $bl_cached_queries_storage;
 }
 
 /* Función para limpiar el caché de una consulta específica */
+// OPTIMIZACIÓN: Ahora también limpia Redis y notifica Varnish
 function bl_clear_cached_query( $cache_id = null ) {
     global $bl_cached_queries_storage;
     
-    if ( !isset( $bl_cached_queries_storage ) ) {
-        return; // No hay nada que limpiar
+    // Cargar helper de Redis si está disponible
+    if ( !function_exists( 'snn_redis_delete' ) ) {
+        $redis_helper = get_stylesheet_directory() . '/includes/redis-cache-helper.php';
+        if ( file_exists( $redis_helper ) ) {
+            require_once $redis_helper;
+        }
     }
     
-    if ( $cache_id === null ) {
-        // Limpiar todos los cachés
-        $bl_cached_queries_storage['queries'] = [];
-        $bl_cached_queries_storage['posts'] = [];
-        $bl_cached_queries_storage['post_ids'] = [];
-    } else {
-        // Limpiar solo un caché específico
-        unset( $bl_cached_queries_storage['queries'][$cache_id] );
-        unset( $bl_cached_queries_storage['posts'][$cache_id] );
-        unset( $bl_cached_queries_storage['post_ids'][$cache_id] );
+    // Limpiar variable global
+    if ( isset( $bl_cached_queries_storage ) ) {
+        if ( $cache_id === null ) {
+            // Limpiar todos los cachés
+            $bl_cached_queries_storage['queries'] = [];
+            $bl_cached_queries_storage['posts'] = [];
+            $bl_cached_queries_storage['post_ids'] = [];
+        } else {
+            // Limpiar solo un caché específico
+            unset( $bl_cached_queries_storage['queries'][$cache_id] );
+            unset( $bl_cached_queries_storage['posts'][$cache_id] );
+            unset( $bl_cached_queries_storage['post_ids'][$cache_id] );
+        }
+    }
+    
+    // Limpiar de Redis también
+    if ( function_exists( 'snn_redis_delete' ) ) {
+        if ( $cache_id === null ) {
+            // Limpiar todo el grupo de queries cacheadas
+            snn_redis_flush_group( 'cached_queries' );
+        } else {
+            // Limpiar solo un cache específico
+            snn_redis_delete( 'bl_cached_queries_storage', 'cached_queries' );
+            snn_redis_delete( 'bl_cached_query_' . $cache_id, 'cached_queries' );
+        }
+    }
+    
+    // Notificar otros sistemas de cache (Varnish, Nginx, etc.)
+    do_action( 'bl_cached_query_cleared', $cache_id );
+    
+    // Limpiar Varnish si está disponible
+    if ( function_exists( 'varnish_http_purge' ) ) {
+        if ( $cache_id === null ) {
+            // Limpiar homepage y todas las páginas principales
+            varnish_http_purge( home_url() );
+        }
     }
 }
 
@@ -557,13 +611,31 @@ function bl_maybe_run_cached_query( $results, $query_obj ) {
     global $bl_cached_queries_storage;
     bl_get_cached_queries_storage(); // Asegurar que la variable global esté inicializada
     
+    // OPTIMIZACIÓN: Intentar obtener de Redis si no está en variable global
+    if ( !isset( $bl_cached_queries_storage['posts'][$cache_id] ) && function_exists( 'snn_redis_get' ) ) {
+        $redis_cache = snn_redis_get( 'bl_cached_query_' . $cache_id, 'cached_queries' );
+        if ( $redis_cache !== false && is_array( $redis_cache ) && isset( $redis_cache['posts'] ) ) {
+            // ✅ Cache encontrado en Redis, cargarlo en variable global
+            $bl_cached_queries_storage['posts'][$cache_id] = $redis_cache['posts'];
+            $bl_cached_queries_storage['post_ids'][$cache_id] = isset( $redis_cache['post_ids'] ) ? $redis_cache['post_ids'] : [];
+        }
+    }
+    
     // Si no existe el WP_Query en caché, crearlo y guardarlo
     // IMPORTANTE: Solo el primer loop (master) crea el caché y puede definir posts_per_page
     if ( !isset( $bl_cached_queries_storage['posts'][$cache_id] ) ) {
         // Este es el loop master - puede definir posts_per_page para la query base
-        // Si el loop master tiene posts_per_page en sus argumentos, usarlo
-        // Si no, usar -1 (todos los posts)
-        $master_posts_per_page = ( $posts_per_page !== null && $posts_per_page > 0 ) ? $posts_per_page : -1;
+        // OPTIMIZACIÓN: Limitar cantidad máxima de posts para evitar alto consumo de CPU
+        // Si no se especifica posts_per_page, usar un límite razonable (100 posts)
+        $max_posts_limit = apply_filters( 'bl_cached_query_max_posts', 100 );
+        
+        if ( $posts_per_page !== null && $posts_per_page > 0 ) {
+            // Si se especifica un límite, respetarlo pero con máximo
+            $master_posts_per_page = min( $posts_per_page, $max_posts_limit );
+        } else {
+            // Si no se especifica, usar el límite máximo (no -1 para evitar traer TODOS los posts)
+            $master_posts_per_page = $max_posts_limit;
+        }
         
         // Aplicar posts_per_page del master a la query base
         $query_args['posts_per_page'] = $master_posts_per_page;
@@ -587,6 +659,18 @@ function bl_maybe_run_cached_query( $results, $query_obj ) {
         }
         $bl_cached_queries_storage['posts'][$cache_id] = $cached_posts;
         $bl_cached_queries_storage['post_ids'][$cache_id] = $post_ids;
+        
+        // OPTIMIZACIÓN: Guardar en Redis para persistencia entre requests
+        if ( function_exists( 'snn_redis_set' ) ) {
+            // Guardar el storage completo en Redis con TTL de 1 hora
+            snn_redis_set( 'bl_cached_queries_storage', $bl_cached_queries_storage, 'cached_queries', 3600 );
+            
+            // También guardar este cache específico por separado (más rápido de acceder)
+            snn_redis_set( 'bl_cached_query_' . $cache_id, [
+                'posts' => $cached_posts,
+                'post_ids' => $post_ids,
+            ], 'cached_queries', 3600 );
+        }
         
         // OPTIMIZACIÓN CRÍTICA: Precargar TODOS los datos necesarios de una vez
         // Esto se hace UNA SOLA VEZ cuando se crea el caché, no cada vez que se renderiza
@@ -837,14 +921,24 @@ function bl_clear_cached_queries_on_post_save( $post_id, $post ) {
         return;
     }
     
-    // Limpiar todos los cachés cuando se guarda cualquier post
+    // Limpiar nuestro sistema de cache de queries
     bl_clear_cached_query();
+    
+    // Limpiar otros sistemas de cache (Varnish, Nginx, etc.) usando el helper
+    if ( function_exists( 'snn_purge_all_caches' ) ) {
+        snn_purge_all_caches( $post_id );
+    }
 }
 
 /* Limpiar todos los cachés cuando se elimina un post */
 add_action( 'delete_post', 'bl_clear_cached_queries_on_post_delete', 10, 1 );
 function bl_clear_cached_queries_on_post_delete( $post_id ) {
     bl_clear_cached_query();
+    
+    // Limpiar otros sistemas de cache
+    if ( function_exists( 'snn_purge_all_caches' ) ) {
+        snn_purge_all_caches( $post_id );
+    }
 }
 
 // ============================================
@@ -868,6 +962,11 @@ function bl_clear_cached_queries_on_status_change( $new_status, $old_status, $po
     // Limpiar si cambia a/desde 'publish' para cualquier tipo de post (incluyendo CPTs)
     if ( $new_status === 'publish' || $old_status === 'publish' ) {
         bl_clear_cached_query();
+        
+        // Limpiar otros sistemas de cache
+        if ( function_exists( 'snn_purge_all_caches' ) ) {
+            snn_purge_all_caches( $post->ID );
+        }
     }
 }
 
