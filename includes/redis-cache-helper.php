@@ -100,10 +100,89 @@ function snn_redis_is_available() {
     }
     
     try {
-        return $redis->ping() === '+PONG';
+        $ping_result = $redis->ping();
+        // Redis puede devolver '+PONG' (string) o true (bool) dependiendo de la versión
+        return ($ping_result === '+PONG' || $ping_result === true || $ping_result === 'PONG');
     } catch (Exception $e) {
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log("SNN Redis ping error: " . $e->getMessage());
+        }
         return false;
     }
+}
+
+/**
+ * Obtener información detallada de diagnóstico de Redis
+ * 
+ * @return array Información de diagnóstico
+ */
+function snn_redis_get_diagnostic() {
+    $diagnostic = [];
+    
+    // Verificar clase Redis
+    if (class_exists('Redis')) {
+        $diagnostic['class_available'] = true;
+        $diagnostic['class_message'] = 'Clase Redis disponible';
+    } else {
+        $diagnostic['class_available'] = false;
+        $diagnostic['class_message'] = 'Clase Redis NO disponible (php-redis no instalado)';
+        return $diagnostic;
+    }
+    
+    // Verificar constantes
+    if (defined('REDIS_HOST')) {
+        $diagnostic['host_defined'] = true;
+        $diagnostic['host_value'] = REDIS_HOST;
+    } else {
+        $diagnostic['host_defined'] = false;
+        $diagnostic['host_value'] = 'No definido';
+    }
+    
+    if (defined('REDIS_PORT')) {
+        $diagnostic['port_defined'] = true;
+        $diagnostic['port_value'] = REDIS_PORT;
+    } else {
+        $diagnostic['port_defined'] = false;
+        $diagnostic['port_value'] = 'No definido';
+    }
+    
+    // Intentar conectar
+    $diagnostic['connection_attempted'] = true;
+    try {
+        $redis = new Redis();
+        $connected = @$redis->connect(
+            defined('REDIS_HOST') ? REDIS_HOST : '127.0.0.1',
+            defined('REDIS_PORT') ? REDIS_PORT : 6379,
+            2 // Timeout de 2 segundos para diagnóstico
+        );
+        
+        if ($connected) {
+            $diagnostic['connection_success'] = true;
+            $diagnostic['connection_message'] = 'Conexión exitosa';
+            
+            // Intentar ping
+            try {
+                $ping = $redis->ping();
+                $diagnostic['ping_success'] = true;
+                $diagnostic['ping_result'] = $ping;
+            } catch (Exception $e) {
+                $diagnostic['ping_success'] = false;
+                $diagnostic['ping_error'] = $e->getMessage();
+            }
+            
+            $redis->close();
+        } else {
+            $diagnostic['connection_success'] = false;
+            $diagnostic['connection_message'] = 'No se pudo conectar a Redis';
+            $diagnostic['connection_error'] = 'Verifica que Redis esté corriendo: redis-cli ping';
+        }
+    } catch (Exception $e) {
+        $diagnostic['connection_success'] = false;
+        $diagnostic['connection_message'] = 'Error al intentar conectar';
+        $diagnostic['connection_error'] = $e->getMessage();
+    }
+    
+    return $diagnostic;
 }
 
 /**
