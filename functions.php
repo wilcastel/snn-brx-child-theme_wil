@@ -125,6 +125,15 @@ require_once SNN_PATH . 'includes/utils.php';
 require_once SNN_PATH . 'includes/auto-update-snn-brx-wil-github.php';
 require_once SNN_PATH . 'includes/query/snn-repeaters-and-queries.php';
 
+// Redis Cache Helper (debe cargarse antes de cached-wp-query.php)
+require_once SNN_PATH . 'includes/redis-cache-helper.php';
+
+// Cache Purge Helper (limpieza de cache en múltiples sistemas)
+require_once SNN_PATH . 'includes/cache-purge-helper.php';
+
+// Cache Admin Page (página de administración para gestionar cache)
+require_once SNN_PATH . 'includes/cache-admin-page.php';
+
 // Bricks Builder - Cached WP Query System
 require_once SNN_PATH . 'includes/cached-wp-query.php';
 
