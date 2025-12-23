@@ -40,6 +40,89 @@ function snn_add_cache_admin_page() {
 }
 
 /**
+ * Función de ayuda para verificar si hay cache activo (para uso en AJAX o otros contextos)
+ * 
+ * @return array Información sobre caches activos
+ */
+function snn_get_active_cached_queries_info() {
+    $active_cache_ids = [];
+    $cache_info = [];
+    
+    // Verificar en variable global
+    if ( function_exists( 'bl_get_cached_query_ids' ) ) {
+        $active_cache_ids = bl_get_cached_query_ids();
+    }
+    
+    // Verificar también en Redis si está disponible
+    $redis_available = function_exists( 'snn_redis_is_available' ) ? snn_redis_is_available() : false;
+    
+    if ( function_exists( 'snn_redis_get' ) && $redis_available ) {
+        // Método 1: Intentar obtener el storage completo de Redis
+        $redis_storage = snn_redis_get( 'bl_cached_queries_storage', 'cached_queries' );
+        if ( $redis_storage !== false && is_array( $redis_storage ) && isset( $redis_storage['posts'] ) ) {
+            $redis_cache_ids = array_keys( $redis_storage['posts'] );
+            $active_cache_ids = array_unique( array_merge( $active_cache_ids, $redis_cache_ids ) );
+            
+            foreach ( $redis_cache_ids as $cache_id ) {
+                $cache_data = snn_redis_get( 'bl_cached_query_' . $cache_id, 'cached_queries' );
+                if ( $cache_data !== false && is_array( $cache_data ) && isset( $cache_data['posts'] ) ) {
+                    $cache_info[$cache_id] = [
+                        'source' => 'Redis',
+                        'posts_count' => count( $cache_data['posts'] ),
+                    ];
+                }
+            }
+        }
+        
+        // Método 2: Buscar directamente en Redis todas las claves de cached queries
+        if ( function_exists( 'snn_redis_find_keys' ) ) {
+            $redis_keys = snn_redis_find_keys( 'bl_cached_query_*', 'cached_queries' );
+            if ( !empty( $redis_keys ) ) {
+                foreach ( $redis_keys as $key ) {
+                    if ( preg_match( '/bl_cached_query_(.+)$/', $key, $matches ) ) {
+                        $cache_id = $matches[1];
+                        if ( !in_array( $cache_id, $active_cache_ids ) ) {
+                            $active_cache_ids[] = $cache_id;
+                        }
+                        
+                        if ( !isset( $cache_info[$cache_id] ) ) {
+                            $cache_data = snn_redis_get( 'bl_cached_query_' . $cache_id, 'cached_queries' );
+                            if ( $cache_data !== false && is_array( $cache_data ) && isset( $cache_data['posts'] ) ) {
+                                $cache_info[$cache_id] = [
+                                    'source' => 'Redis (búsqueda directa)',
+                                    'posts_count' => count( $cache_data['posts'] ),
+                                ];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // También verificar variable global
+    global $bl_cached_queries_storage;
+    if ( isset( $bl_cached_queries_storage['posts'] ) && is_array( $bl_cached_queries_storage['posts'] ) ) {
+        foreach ( $bl_cached_queries_storage['posts'] as $cache_id => $posts ) {
+            if ( !isset( $cache_info[$cache_id] ) ) {
+                $cache_info[$cache_id] = [
+                    'source' => 'Variable Global',
+                    'posts_count' => count( $posts ),
+                ];
+            } else {
+                $cache_info[$cache_id]['source'] = 'Redis + Variable Global';
+            }
+        }
+    }
+    
+    return [
+        'cache_ids' => $active_cache_ids,
+        'cache_info' => $cache_info,
+        'has_cache' => !empty( $active_cache_ids ),
+    ];
+}
+
+/**
  * Callback de la página de administración
  */
 function snn_cache_admin_page_callback() {
@@ -254,79 +337,10 @@ function snn_cache_admin_page_callback() {
         }
     }
     
-    // Obtener cache IDs activos (de variable global y Redis)
-    $active_cache_ids = [];
-    $cache_info = [];
-    
-    // Verificar en variable global
-    if ( function_exists( 'bl_get_cached_query_ids' ) ) {
-        $active_cache_ids = bl_get_cached_query_ids();
-    }
-    
-    // Verificar también en Redis si está disponible
-    if ( function_exists( 'snn_redis_get' ) && $redis_available ) {
-        // Método 1: Intentar obtener el storage completo de Redis
-        $redis_storage = snn_redis_get( 'bl_cached_queries_storage', 'cached_queries' );
-        if ( $redis_storage !== false && is_array( $redis_storage ) && isset( $redis_storage['posts'] ) ) {
-            $redis_cache_ids = array_keys( $redis_storage['posts'] );
-            // Combinar con los IDs de variable global
-            $active_cache_ids = array_unique( array_merge( $active_cache_ids, $redis_cache_ids ) );
-            
-            // Obtener información de cada cache
-            foreach ( $redis_cache_ids as $cache_id ) {
-                $cache_data = snn_redis_get( 'bl_cached_query_' . $cache_id, 'cached_queries' );
-                if ( $cache_data !== false && is_array( $cache_data ) && isset( $cache_data['posts'] ) ) {
-                    $cache_info[$cache_id] = [
-                        'source' => 'Redis',
-                        'posts_count' => count( $cache_data['posts'] ),
-                    ];
-                }
-            }
-        }
-        
-        // Método 2: Buscar directamente en Redis todas las claves de cached queries
-        // Esto es más confiable porque busca individualmente cada cache
-        if ( function_exists( 'snn_redis_find_keys' ) ) {
-            $redis_keys = snn_redis_find_keys( 'bl_cached_query_*', 'cached_queries' );
-            if ( !empty( $redis_keys ) ) {
-                foreach ( $redis_keys as $key ) {
-                    // Extraer cache_id de la clave (formato: bl_cached_query_{cache_id})
-                    if ( preg_match( '/bl_cached_query_(.+)$/', $key, $matches ) ) {
-                        $cache_id = $matches[1];
-                        if ( !in_array( $cache_id, $active_cache_ids ) ) {
-                            $active_cache_ids[] = $cache_id;
-                        }
-                        
-                        // Obtener información del cache
-                        if ( !isset( $cache_info[$cache_id] ) ) {
-                            $cache_data = snn_redis_get( 'bl_cached_query_' . $cache_id, 'cached_queries' );
-                            if ( $cache_data !== false && is_array( $cache_data ) && isset( $cache_data['posts'] ) ) {
-                                $cache_info[$cache_id] = [
-                                    'source' => 'Redis (búsqueda directa)',
-                                    'posts_count' => count( $cache_data['posts'] ),
-                                ];
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
-    // También verificar variable global para información adicional
-    global $bl_cached_queries_storage;
-    if ( isset( $bl_cached_queries_storage['posts'] ) && is_array( $bl_cached_queries_storage['posts'] ) ) {
-        foreach ( $bl_cached_queries_storage['posts'] as $cache_id => $posts ) {
-            if ( !isset( $cache_info[$cache_id] ) ) {
-                $cache_info[$cache_id] = [
-                    'source' => 'Variable Global',
-                    'posts_count' => count( $posts ),
-                ];
-            } else {
-                $cache_info[$cache_id]['source'] = 'Redis + Variable Global';
-            }
-        }
-    }
+    // Obtener cache IDs activos usando la función de ayuda
+    $cache_data = snn_get_active_cached_queries_info();
+    $active_cache_ids = $cache_data['cache_ids'];
+    $cache_info = $cache_data['cache_info'];
     
     ?>
     <div class="wrap">
@@ -491,6 +505,70 @@ function snn_cache_admin_page_callback() {
                 <li><strong>Compatibilidad:</strong> El sistema es compatible con tu sistema de Cached WP Query existente.</li>
             </ul>
         </div>
+        
+        <?php if ( defined( 'WP_DEBUG' ) && WP_DEBUG ): ?>
+        <div class="card" style="max-width: 1200px; margin-top: 20px;">
+            <h2>🔍 Diagnóstico de Cached WP Query</h2>
+            <p>Esta sección solo se muestra cuando <code>WP_DEBUG</code> está activo.</p>
+            
+            <h3>Verificar configuración en Bricks:</h3>
+            <ol>
+                <li>Abre Bricks Builder en la página que usa Cached WP Query</li>
+                <li>Selecciona el elemento con Query Loop</li>
+                <li>En la pestaña <strong>CONTENT</strong> → <strong>Query</strong>, verifica:
+                    <ul>
+                        <li>✅ <strong>Type:</strong> Debe estar en "Cached WP Query"</li>
+                        <li>✅ <strong>Cache ID:</strong> Debe tener un valor (ej: "homepage", "QueryHome100", etc.)</li>
+                        <li>✅ <strong>Query Arguments:</strong> Debe tener los argumentos de la query configurados</li>
+                    </ul>
+                </li>
+            </ol>
+            
+            <h3>Verificar logs del servidor:</h3>
+            <p>Si <code>WP_DEBUG</code> está activo, revisa los logs del servidor (generalmente en <code>wp-content/debug.log</code>) para ver mensajes como:</p>
+            <ul>
+                <li><code>Cached WP Query: Procesando cache_id: [tu_cache_id]</code> - Indica que el sistema está procesando el cache</li>
+                <li><code>Cached WP Query: Cache guardado en Redis...</code> - Indica que el cache se guardó exitosamente</li>
+                <li><code>Cached WP Query: cache_id no configurado...</code> - Indica que falta configurar el Cache ID en Bricks</li>
+            </ul>
+            
+            <h3>Probar manualmente:</h3>
+            <p>Visita la página que usa Cached WP Query y luego vuelve a esta página para ver si aparece el cache activo.</p>
+            
+            <?php
+            // Mostrar información de diagnóstico adicional
+            global $bl_cached_queries_storage;
+            if ( isset( $bl_cached_queries_storage ) ) {
+                echo '<h3>Estado actual en memoria:</h3>';
+                echo '<pre style="background: #f5f5f5; padding: 10px; overflow: auto;">';
+                echo 'Cache IDs en variable global: ' . ( isset( $bl_cached_queries_storage['posts'] ) ? count( $bl_cached_queries_storage['posts'] ) : 0 ) . "\n";
+                if ( isset( $bl_cached_queries_storage['posts'] ) && !empty( $bl_cached_queries_storage['posts'] ) ) {
+                    foreach ( $bl_cached_queries_storage['posts'] as $cache_id => $posts ) {
+                        echo "  - {$cache_id}: " . count( $posts ) . " posts\n";
+                    }
+                }
+                echo '</pre>';
+            }
+            
+            // Verificar en Redis directamente
+            if ( $redis_available && function_exists( 'snn_redis_find_keys' ) ) {
+                $redis_keys = snn_redis_find_keys( 'bl_cached_query_*', 'cached_queries' );
+                echo '<h3>Claves encontradas en Redis:</h3>';
+                if ( !empty( $redis_keys ) ) {
+                    echo '<ul>';
+                    foreach ( $redis_keys as $key ) {
+                        $cache_data = snn_redis_get( $key, 'cached_queries' );
+                        $posts_count = ( $cache_data && isset( $cache_data['posts'] ) ) ? count( $cache_data['posts'] ) : 0;
+                        echo '<li><code>' . esc_html( $key ) . '</code>: ' . $posts_count . ' posts</li>';
+                    }
+                    echo '</ul>';
+                } else {
+                    echo '<p>No se encontraron claves de cache en Redis.</p>';
+                }
+            }
+            ?>
+        </div>
+        <?php endif; ?>
     </div>
     
     <style>

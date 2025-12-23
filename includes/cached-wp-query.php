@@ -456,10 +456,19 @@ function bl_maybe_run_cached_query( $results, $query_obj ) {
     
     // Verificar que existe el cache_id
     if ( !isset( $settings['cached_wp_query_cache_id'] ) || empty( $settings['cached_wp_query_cache_id'] ) ) {
+        // Log para diagnóstico si WP_DEBUG está activo
+        if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+            error_log( 'Cached WP Query: cache_id no configurado. Settings disponibles: ' . print_r( array_keys( $settings ), true ) );
+        }
         return $results;
     }
     
     $cache_id = sanitize_text_field( $settings['cached_wp_query_cache_id'] );
+    
+    // Log para diagnóstico si WP_DEBUG está activo
+    if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+        error_log( 'Cached WP Query: Procesando cache_id: ' . $cache_id );
+    }
     
     // PRIMERO: Leer los parámetros del loop (offset y posts_per_page) ANTES de procesar la query base
     // Esto es importante porque estos valores pueden estar en cached_wp_query_args pero NO deben usarse para la query base
@@ -663,13 +672,23 @@ function bl_maybe_run_cached_query( $results, $query_obj ) {
         // OPTIMIZACIÓN: Guardar en Redis para persistencia entre requests
         if ( function_exists( 'snn_redis_set' ) ) {
             // Guardar el storage completo en Redis con TTL de 1 hora
-            snn_redis_set( 'bl_cached_queries_storage', $bl_cached_queries_storage, 'cached_queries', 3600 );
+            $storage_saved = snn_redis_set( 'bl_cached_queries_storage', $bl_cached_queries_storage, 'cached_queries', 3600 );
             
             // También guardar este cache específico por separado (más rápido de acceder)
-            snn_redis_set( 'bl_cached_query_' . $cache_id, [
+            $cache_saved = snn_redis_set( 'bl_cached_query_' . $cache_id, [
                 'posts' => $cached_posts,
                 'post_ids' => $post_ids,
             ], 'cached_queries', 3600 );
+            
+            // Log para diagnóstico si WP_DEBUG está activo
+            if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+                error_log( 'Cached WP Query: Cache guardado en Redis. Cache ID: ' . $cache_id . ', Posts: ' . count( $cached_posts ) . ', Storage saved: ' . ( $storage_saved ? 'Sí' : 'No' ) . ', Cache saved: ' . ( $cache_saved ? 'Sí' : 'No' ) );
+            }
+        } else {
+            // Log si Redis no está disponible
+            if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+                error_log( 'Cached WP Query: Redis no disponible. Cache solo en memoria. Cache ID: ' . $cache_id . ', Posts: ' . count( $cached_posts ) );
+            }
         }
         
         // OPTIMIZACIÓN CRÍTICA: Precargar TODOS los datos necesarios de una vez
