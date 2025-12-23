@@ -137,6 +137,9 @@ require_once SNN_PATH . 'includes/cache-admin-page.php';
 // Bricks Builder - Cached WP Query System
 require_once SNN_PATH . 'includes/cached-wp-query.php';
 
+// contador de visitas
+require_once SNN_PATH . 'contador-visitas.php';
+
 // Register Custom Bricks Builder Elements
 add_action('init', function () {
 \Bricks\Elements::register_element(SNN_PATH . 'includes/elements/custom-html-css-script.php');

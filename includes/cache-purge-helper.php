@@ -42,26 +42,40 @@ function snn_purge_varnish_cache( $url = null ) {
  * Limpiar cache de Varnish usando HTTP PURGE
  * 
  * @param string|array $urls URL o array de URLs a limpiar
- * @return int Número de URLs limpiadas exitosamente
+ * @param bool $return_details Si es true, retorna array con detalles en lugar de solo el número
+ * @return int|array Número de URLs limpiadas exitosamente, o array con detalles si $return_details es true
  */
-function snn_purge_varnish_urls( $urls ) {
+function snn_purge_varnish_urls( $urls, $return_details = false ) {
     if ( !is_array( $urls ) ) {
         $urls = [ $urls ];
     }
     
     $purged = 0;
+    $details = [];
     
     foreach ( $urls as $url ) {
+        $url_detail = [
+            'url' => $url,
+            'success' => false,
+            'error' => null,
+        ];
+        
         // Intentar con función de plugin primero
         if ( function_exists( 'varnish_http_purge' ) ) {
             if ( snn_purge_varnish_cache( $url ) ) {
                 $purged++;
+                $url_detail['success'] = true;
+                $url_detail['method'] = 'plugin';
+            } else {
+                $url_detail['error'] = 'Función varnish_http_purge() retornó false';
             }
         } else {
             // Fallback: hacer request HTTP PURGE directamente (sin plugin)
             // Nota: Esto requiere que Varnish esté configurado para aceptar PURGE desde localhost
             if ( !function_exists( 'curl_init' ) ) {
                 // Si curl no está disponible, no podemos hacer PURGE automático
+                $url_detail['error'] = 'curl no está disponible en el servidor';
+                $details[] = $url_detail;
                 continue;
             }
             
@@ -87,12 +101,53 @@ function snn_purge_varnish_urls( $urls ) {
             $curl_error = curl_error( $ch );
             curl_close( $ch );
             
+            $url_detail['method'] = 'HTTP PURGE directo';
+            $url_detail['http_code'] = $http_code;
+            
             if ( $http_code === 200 || $http_code === 204 ) {
                 $purged++;
-            } elseif ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
-                error_log( 'SNN Varnish PURGE failed for ' . $full_url . ': HTTP ' . $http_code . ( $curl_error ? ' - ' . $curl_error : '' ) );
+                $url_detail['success'] = true;
+            } else {
+                // Construir mensaje de error detallado
+                $error_parts = [];
+                if ( $http_code ) {
+                    $error_parts[] = 'HTTP ' . $http_code;
+                    // Agregar descripción del código HTTP
+                    if ( $http_code === 405 ) {
+                        $error_parts[] = '(Método no permitido - Varnish puede no estar configurado para aceptar PURGE)';
+                    } elseif ( $http_code === 403 ) {
+                        $error_parts[] = '(Prohibido - Varnish puede requerir autenticación o IP permitida)';
+                    } elseif ( $http_code === 404 ) {
+                        $error_parts[] = '(No encontrado)';
+                    } elseif ( $http_code === 0 ) {
+                        $error_parts[] = '(Sin conexión - Varnish puede no estar corriendo o no ser accesible)';
+                    }
+                }
+                if ( $curl_error ) {
+                    $error_parts[] = 'Error curl: ' . $curl_error;
+                }
+                if ( empty( $error_parts ) ) {
+                    $error_parts[] = 'Respuesta inesperada';
+                }
+                $url_detail['error'] = implode( ' - ', $error_parts );
+                
+                if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+                    error_log( 'SNN Varnish PURGE failed for ' . $full_url . ': ' . $url_detail['error'] );
+                }
             }
         }
+        
+        if ( $return_details ) {
+            $details[] = $url_detail;
+        }
+    }
+    
+    if ( $return_details ) {
+        return [
+            'purged' => $purged,
+            'total' => count( $urls ),
+            'details' => $details,
+        ];
     }
     
     return $purged;
@@ -145,17 +200,24 @@ function snn_purge_all_caches( $post_id = null ) {
         'wordpress' => false,
     ];
     
-    // 1. Limpiar Redis
-    if ( function_exists( 'snn_redis_flush_group' ) ) {
-        $results['redis'] = snn_redis_flush_group( 'cached_queries' ) > 0;
+    // 1. Limpiar Redis (queries cacheadas)
+    if ( function_exists( 'bl_clear_cached_query' ) ) {
+        bl_clear_cached_query();
+        $results['redis'] = true; // Siempre exitoso si la función existe
     }
     
-    // 2. Limpiar WordPress transients y object cache
+    // 2. Limpiar Redis Object Cache
+    if ( function_exists( 'snn_redis_flush_group' ) ) {
+        $flushed = snn_redis_flush_group( 'cached_queries' );
+        $results['redis'] = $results['redis'] || ( $flushed >= 0 ); // >= 0 porque puede ser 0 si no hay cache
+    }
+    
+    // 3. Limpiar WordPress transients y object cache
     if ( function_exists( 'wp_cache_flush' ) ) {
         $results['wordpress'] = wp_cache_flush();
     }
     
-    // 3. Limpiar Varnish
+    // 4. Limpiar Varnish
     $varnish_urls = [ home_url() ];
     
     if ( $post_id ) {
@@ -163,9 +225,10 @@ function snn_purge_all_caches( $post_id = null ) {
         $varnish_urls[] = home_url(); // Homepage también
     }
     
-    $results['varnish'] = snn_purge_varnish_urls( $varnish_urls ) > 0;
+    $varnish_purged = snn_purge_varnish_urls( $varnish_urls );
+    $results['varnish'] = $varnish_purged > 0;
     
-    // 4. Limpiar Nginx FastCGI Cache
+    // 5. Limpiar Nginx FastCGI Cache
     $results['nginx'] = snn_purge_nginx_cache();
     
     // Hook para otros sistemas
