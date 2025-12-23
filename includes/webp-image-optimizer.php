@@ -1550,8 +1550,10 @@ class SNN_WebP_Image_Optimizer {
             return false;
         }
         
-        $upload_url = $this->upload_dir['baseurl'];
-        $upload_basedir = $this->upload_dir['basedir'];
+        // Asegurar que upload_dir está actualizado (puede cambiar si UPLOADS está definido)
+        $current_upload_dir = wp_upload_dir();
+        $upload_url = $current_upload_dir['baseurl'];
+        $upload_basedir = $current_upload_dir['basedir'];
         
         // Normalizar URL - puede venir como URL completa o relativa
         $image_url_clean = $image_url;
@@ -1568,14 +1570,33 @@ class SNN_WebP_Image_Optimizer {
         $is_from_uploads = false;
         
         // Caso 1: Contiene upload_url base
-        if (strpos($image_url_clean, $upload_url) !== false) {
+        // Normalizar upload_url para comparación (puede ser completa o relativa)
+        $upload_url_for_comparison = $upload_url;
+        if (strpos($upload_url, 'http') === 0) {
+            // Si upload_url es completa, extraer solo la ruta para comparación con image_url_clean
+            if (preg_match('#https?://[^/]+(/.+)$#', $upload_url, $upload_matches)) {
+                $upload_url_for_comparison = $upload_matches[1];
+            }
+        }
+        
+        if (strpos($image_url_clean, $upload_url_for_comparison) !== false) {
+            $relative_path = str_replace($upload_url_for_comparison, '', $image_url_clean);
+            $relative_path = ltrim($relative_path, '/');
+            $is_from_uploads = true;
+        } elseif (strpos($image_url_clean, $upload_url) !== false && strpos($upload_url, 'http') !== 0) {
+            // Fallback: si upload_url es relativa y está en la URL
             $relative_path = str_replace($upload_url, '', $image_url_clean);
+            $relative_path = ltrim($relative_path, '/');
             $is_from_uploads = true;
         }
-        // Caso 2: Contiene /wp-content/uploads/
+        // Caso 2: Contiene /wp-content/uploads/ (convertir a estructura personalizada si aplica)
         elseif (preg_match('#/wp-content/uploads/(.+)$#', $image_url_clean, $matches)) {
             $relative_path = $matches[1];
             $is_from_uploads = true;
+            // Si upload_url no contiene /wp-content/uploads/, significa que hay carpeta personalizada
+            // La ruta relativa ya está correcta (ej: 2025/08/banner.jpg)
+            // upload_basedir ya apunta a la carpeta correcta (ej: /path/to/fotoedicion)
+            // Así que la búsqueda del archivo WebP funcionará correctamente
         }
         // Caso 3: Contiene /fotoedicion/ (estructura personalizada)
         elseif (preg_match('#/(fotoedicion/.+)$#', $image_url_clean, $matches)) {
@@ -1640,13 +1661,64 @@ class SNN_WebP_Image_Optimizer {
         
         // Verificar que el archivo WebP existe
         if (file_exists($webp_path)) {
-            // Construir URL WebP
+            // Construir URL WebP respetando la estructura de carpetas personalizada
             if ($is_full_url) {
-                // URL completa, reemplazar extensión manteniendo estructura
-                return preg_replace('/\.(jpg|jpeg|png)$/i', '.webp', $image_url);
+                // URL completa: reemplazar extensión y también la estructura de carpetas si es necesario
+                $webp_url = preg_replace('/\.(jpg|jpeg|png)$/i', '.webp', $image_url);
+                
+                // Si la URL original contenía /wp-content/uploads/ pero upload_url es diferente (ej: /fotoedicion/)
+                // Reemplazar la estructura de carpetas también
+                if (strpos($image_url, '/wp-content/uploads/') !== false && strpos($upload_url, '/wp-content/uploads/') === false) {
+                    // Extraer el dominio y protocolo de la URL original
+                    if (preg_match('#^(https?://[^/]+)(/.+)$#', $image_url, $original_parts)) {
+                        $domain = $original_parts[1];
+                        $original_path = $original_parts[2];
+                        
+                        // Extraer solo la ruta relativa (sin /wp-content/uploads/)
+                        if (preg_match('#/wp-content/uploads/(.+)$#', $original_path, $path_matches)) {
+                            $relative_path = $path_matches[1];
+                            
+                            // Construir nueva URL usando el dominio original y la estructura correcta
+                            // upload_url puede ser relativa (/fotoedicion) o completa (https://site.com/fotoedicion)
+                            if (strpos($upload_url, 'http') === 0) {
+                                // upload_url es completa, extraer solo la ruta
+                                if (preg_match('#https?://[^/]+(/.+)$#', $upload_url, $upload_parts)) {
+                                    $upload_path = rtrim($upload_parts[1], '/');
+                                    $webp_url = $domain . $upload_path . '/' . preg_replace('/\.(jpg|jpeg|png)$/i', '.webp', $relative_path);
+                                } else {
+                                    $webp_url = preg_replace('/\.(jpg|jpeg|png)$/i', '.webp', $image_url);
+                                }
+                            } else {
+                                // upload_url es relativa (ej: /fotoedicion)
+                                $upload_path = rtrim($upload_url, '/');
+                                $webp_url = $domain . $upload_path . '/' . preg_replace('/\.(jpg|jpeg|png)$/i', '.webp', $relative_path);
+                            }
+                        }
+                    }
+                }
+                
+                return $webp_url;
             } else {
-                // Ruta relativa, construir URL completa
-                return $upload_url . '/' . $webp_relative_path;
+                // Ruta relativa, construir URL completa usando upload_url (que respeta la carpeta personalizada)
+                // upload_url puede ser relativa (/fotoedicion) o completa (https://site.com/fotoedicion)
+                if (strpos($upload_url, 'http') === 0) {
+                    // upload_url es completa, usar directamente
+                    $upload_url_clean = rtrim($upload_url, '/');
+                    $webp_path_clean = ltrim($webp_relative_path, '/');
+                    return $upload_url_clean . '/' . $webp_path_clean;
+                } else {
+                    // upload_url es relativa, construir URL completa
+                    $domain = '';
+                    if ($is_full_url && preg_match('#^(https?://[^/]+)#', $image_url, $domain_match)) {
+                        $domain = $domain_match[1];
+                    } else {
+                        // Usar home_url como fallback
+                        $domain = home_url();
+                    }
+                    $upload_url_clean = rtrim($upload_url, '/');
+                    $webp_path_clean = ltrim($webp_relative_path, '/');
+                    return $domain . $upload_url_clean . '/' . $webp_path_clean;
+                }
             }
         }
         
@@ -1754,7 +1826,9 @@ class SNN_WebP_Image_Optimizer {
         // Las imágenes con data-src ya tienen su placeholder aplicado
         // Solo reemplazar URLs en src, srcset, background-image que NO sean placeholders
         
-        $upload_baseurl = $this->upload_dir['baseurl'];
+        // Asegurar que upload_dir está actualizado (puede cambiar si UPLOADS está definido)
+        $current_upload_dir = wp_upload_dir();
+        $upload_baseurl = $current_upload_dir['baseurl'];
         
         // Patrón para encontrar URLs de imágenes en el HTML
         // Busca src, srcset, data-src, background-image, etc.
@@ -1774,6 +1848,11 @@ class SNN_WebP_Image_Optimizer {
                 $quote_before = $matches[1];
                 $image_url = $matches[2];
                 $quote_after = isset($matches[4]) ? $matches[4] : '';
+                
+                // NO reemplazar si ya es WebP (por seguridad)
+                if (preg_match('/\.webp$/i', $image_url)) {
+                    return $matches[0]; // Ya es WebP, no reemplazar
+                }
                 
                 // NO reemplazar placeholders (data:image/svg+xml o data:image/svg)
                 if (strpos($image_url, 'data:image/svg') === 0) {
@@ -2052,7 +2131,9 @@ class SNN_WebP_Image_Optimizer {
      * Field callbacks
      */
     public function enable_webp_callback() {
-        $enabled = isset($this->options['enable_webp']) ? $this->options['enable_webp'] : true;
+        // Recargar opciones para asegurar que tenemos los valores más recientes
+        $current_options = get_option('snn_webp_options', array());
+        $enabled = isset($current_options['enable_webp']) && (int)$current_options['enable_webp'] === 1 ? 1 : 0;
         
         // Check if Cloudflare is detected
         $has_cloudflare = false;
@@ -2090,19 +2171,25 @@ class SNN_WebP_Image_Optimizer {
     }
     
     public function enable_preload_callback() {
-        $enabled = isset($this->options['enable_preload']) ? $this->options['enable_preload'] : true;
+        // Recargar opciones para asegurar que tenemos los valores más recientes
+        $current_options = get_option('snn_webp_options', array());
+        $enabled = isset($current_options['enable_preload']) && (int)$current_options['enable_preload'] === 1 ? 1 : 0;
         echo '<input type="checkbox" name="snn_webp_options[enable_preload]" value="1" ' . checked(1, $enabled, false) . ' />';
         echo '<p class="description">' . __('Preload critical images for faster loading.', 'snn') . '</p>';
     }
     
     public function enable_lazy_loading_callback() {
-        $enabled = isset($this->options['enable_lazy_loading']) ? $this->options['enable_lazy_loading'] : true;
+        // Recargar opciones para asegurar que tenemos los valores más recientes
+        $current_options = get_option('snn_webp_options', array());
+        $enabled = isset($current_options['enable_lazy_loading']) && (int)$current_options['enable_lazy_loading'] === 1 ? 1 : 0;
         echo '<input type="checkbox" name="snn_webp_options[enable_lazy_loading]" value="1" ' . checked(1, $enabled, false) . ' />';
         echo '<p class="description">' . __('Enable lazy loading for non-critical images.', 'snn') . '</p>';
     }
     
     public function enable_placeholder_callback() {
-        $enabled = isset($this->options['enable_placeholder']) ? $this->options['enable_placeholder'] : true;
+        // Recargar opciones para asegurar que tenemos los valores más recientes
+        $current_options = get_option('snn_webp_options', array());
+        $enabled = isset($current_options['enable_placeholder']) && (int)$current_options['enable_placeholder'] === 1 ? 1 : 0;
         echo '<input type="checkbox" name="snn_webp_options[enable_placeholder]" value="1" ' . checked(1, $enabled, false) . ' />';
         echo '<p class="description">' . __('Show placeholder images while loading.', 'snn') . '</p>';
     }
@@ -2120,13 +2207,17 @@ class SNN_WebP_Image_Optimizer {
     }
     
     public function convert_all_sizes_callback() {
-        $enabled = isset($this->options['convert_all_sizes']) ? $this->options['convert_all_sizes'] : true;
+        // Recargar opciones para asegurar que tenemos los valores más recientes
+        $current_options = get_option('snn_webp_options', array());
+        $enabled = isset($current_options['convert_all_sizes']) && (int)$current_options['convert_all_sizes'] === 1 ? 1 : 0;
         echo '<input type="checkbox" name="snn_webp_options[convert_all_sizes]" value="1" ' . checked(1, $enabled, false) . ' />';
         echo '<p class="description">' . __('Convert all WordPress image sizes (thumbnail, medium, large, etc.) to WebP. Recommended for better Core Web Vitals.', 'snn') . '</p>';
     }
     
     public function auto_serve_webp_callback() {
-        $enabled = isset($this->options['auto_serve_webp']) ? $this->options['auto_serve_webp'] : true;
+        // Recargar opciones para asegurar que tenemos los valores más recientes
+        $current_options = get_option('snn_webp_options', array());
+        $enabled = isset($current_options['auto_serve_webp']) && (int)$current_options['auto_serve_webp'] === 1 ? 1 : 0;
         echo '<input type="checkbox" name="snn_webp_options[auto_serve_webp]" value="1" ' . checked(1, $enabled, false) . ' />';
         echo '<p class="description">' . __('Automatically serve WebP images when available. Fixes 404 errors for converted images.', 'snn') . '</p>';
     }
@@ -2137,17 +2228,18 @@ class SNN_WebP_Image_Optimizer {
     public function sanitize_options($input) {
         $sanitized = array();
         
-        $sanitized['enable_webp'] = isset($input['enable_webp']) ? 1 : 0;
+        // Checkboxes: check the value, not just if key exists (0 means unchecked, 1 means checked)
+        $sanitized['enable_webp'] = (isset($input['enable_webp']) && (int)$input['enable_webp'] === 1) ? 1 : 0;
         $sanitized['webp_quality'] = intval($input['webp_quality'] ?? 80);
         $sanitized['max_width'] = intval($input['max_width'] ?? 1920);
         $sanitized['max_height'] = intval($input['max_height'] ?? 1080);
-        $sanitized['enable_preload'] = isset($input['enable_preload']) ? 1 : 0;
-        $sanitized['enable_lazy_loading'] = isset($input['enable_lazy_loading']) ? 1 : 0;
-        $sanitized['enable_placeholder'] = isset($input['enable_placeholder']) ? 1 : 0;
+        $sanitized['enable_preload'] = (isset($input['enable_preload']) && (int)$input['enable_preload'] === 1) ? 1 : 0;
+        $sanitized['enable_lazy_loading'] = (isset($input['enable_lazy_loading']) && (int)$input['enable_lazy_loading'] === 1) ? 1 : 0;
+        $sanitized['enable_placeholder'] = (isset($input['enable_placeholder']) && (int)$input['enable_placeholder'] === 1) ? 1 : 0;
         $sanitized['critical_images'] = sanitize_textarea_field($input['critical_images'] ?? '');
         $sanitized['batch_size'] = intval($input['batch_size'] ?? 50);
-        $sanitized['convert_all_sizes'] = isset($input['convert_all_sizes']) ? 1 : 0;
-        $sanitized['auto_serve_webp'] = isset($input['auto_serve_webp']) ? 1 : 0;
+        $sanitized['convert_all_sizes'] = (isset($input['convert_all_sizes']) && (int)$input['convert_all_sizes'] === 1) ? 1 : 0;
+        $sanitized['auto_serve_webp'] = (isset($input['auto_serve_webp']) && (int)$input['auto_serve_webp'] === 1) ? 1 : 0;
         
         return $sanitized;
     }
