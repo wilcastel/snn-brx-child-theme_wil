@@ -9,6 +9,10 @@
  * - Nginx FastCGI Cache
  * - WordPress Transients
  * 
+ * Configuración opcional de Varnish (en wp-config.php):
+ * define( 'VARNISH_HOST', '127.0.0.1' ); // Por defecto: 127.0.0.1
+ * define( 'VARNISH_PORT', 6081 );         // Por defecto: 6081
+ * 
  * @package SNN Theme
  * @since 1.0.0
  */
@@ -98,24 +102,21 @@ function snn_purge_varnish_urls( $urls, $return_details = false ) {
             $path = isset( $parsed_url['path'] ) ? $parsed_url['path'] : '/';
             $query = isset( $parsed_url['query'] ) ? '?' . $parsed_url['query'] : '';
             
-            // Construir URL completa
-            $full_url = $scheme . '://' . $host . $path . $query;
+            // Obtener puerto de Varnish (por defecto 6081, pero puede configurarse)
+            $varnish_port = defined( 'VARNISH_PORT' ) ? VARNISH_PORT : 6081;
+            $varnish_host = defined( 'VARNISH_HOST' ) ? VARNISH_HOST : '127.0.0.1';
             
-            // Validar que la URL sea válida
-            if ( filter_var( $full_url, FILTER_VALIDATE_URL ) === false ) {
-                $url_detail['error'] = 'URL inválida construida: ' . $full_url;
-                $details[] = $url_detail;
-                continue;
-            }
+            // Método 1: Intentar PURGE directamente al puerto de Varnish (localhost:6081)
+            // Este es el método más común y confiable
+            $varnish_url = 'http://' . $varnish_host . ':' . $varnish_port . $path . $query;
             
-            $ch = curl_init( $full_url );
+            $ch = curl_init( $varnish_url );
             curl_setopt( $ch, CURLOPT_CUSTOMREQUEST, 'PURGE' );
             curl_setopt( $ch, CURLOPT_RETURNTRANSFER, true );
             curl_setopt( $ch, CURLOPT_TIMEOUT, 2 );
             curl_setopt( $ch, CURLOPT_CONNECTTIMEOUT, 1 );
             curl_setopt( $ch, CURLOPT_HTTPHEADER, [
                 'Host: ' . $host,
-                'X-Purge-Method: PURGE',
             ] );
             
             $response = curl_exec( $ch );
@@ -123,8 +124,39 @@ function snn_purge_varnish_urls( $urls, $return_details = false ) {
             $curl_error = curl_error( $ch );
             curl_close( $ch );
             
-            $url_detail['method'] = 'HTTP PURGE directo';
+            $url_detail['method'] = 'HTTP PURGE directo (puerto Varnish)';
             $url_detail['http_code'] = $http_code;
+            $url_detail['varnish_url'] = $varnish_url;
+            
+            // Si el método directo al puerto de Varnish falla, intentar método alternativo
+            if ( $http_code !== 200 && $http_code !== 204 ) {
+                // Método 2: Intentar con la URL pública (fallback)
+                $full_url = $scheme . '://' . $host . $path . $query;
+                
+                if ( filter_var( $full_url, FILTER_VALIDATE_URL ) !== false ) {
+                    $ch2 = curl_init( $full_url );
+                    curl_setopt( $ch2, CURLOPT_CUSTOMREQUEST, 'PURGE' );
+                    curl_setopt( $ch2, CURLOPT_RETURNTRANSFER, true );
+                    curl_setopt( $ch2, CURLOPT_TIMEOUT, 2 );
+                    curl_setopt( $ch2, CURLOPT_CONNECTTIMEOUT, 1 );
+                    curl_setopt( $ch2, CURLOPT_HTTPHEADER, [
+                        'Host: ' . $host,
+                        'X-Purge-Method: PURGE',
+                    ] );
+                    
+                    $response2 = curl_exec( $ch2 );
+                    $http_code2 = curl_getinfo( $ch2, CURLINFO_HTTP_CODE );
+                    $curl_error2 = curl_error( $ch2 );
+                    curl_close( $ch2 );
+                    
+                    if ( $http_code2 === 200 || $http_code2 === 204 ) {
+                        $http_code = $http_code2;
+                        $curl_error = $curl_error2;
+                        $url_detail['method'] = 'HTTP PURGE directo (URL pública)';
+                        $url_detail['varnish_url'] = $full_url;
+                    }
+                }
+            }
             
             if ( $http_code === 200 || $http_code === 204 ) {
                 $purged++;
@@ -136,7 +168,7 @@ function snn_purge_varnish_urls( $urls, $return_details = false ) {
                     $error_parts[] = 'HTTP ' . $http_code;
                     // Agregar descripción del código HTTP
                     if ( $http_code === 400 ) {
-                        $error_parts[] = '(Bad Request - La URL puede ser inválida o falta algún header requerido. Verifica que la URL sea correcta y que Varnish esté configurado para aceptar PURGE)';
+                        $error_parts[] = '(Bad Request - Varnish puede requerir configuración específica. Intentado en: ' . $varnish_url . ')';
                     } elseif ( $http_code === 405 ) {
                         $error_parts[] = '(Método no permitido - Varnish puede no estar configurado para aceptar PURGE)';
                     } elseif ( $http_code === 403 ) {
@@ -144,7 +176,7 @@ function snn_purge_varnish_urls( $urls, $return_details = false ) {
                     } elseif ( $http_code === 404 ) {
                         $error_parts[] = '(No encontrado)';
                     } elseif ( $http_code === 0 ) {
-                        $error_parts[] = '(Sin conexión - Varnish puede no estar corriendo o no ser accesible)';
+                        $error_parts[] = '(Sin conexión - Varnish puede no estar corriendo en ' . $varnish_host . ':' . $varnish_port . ' o no ser accesible)';
                     } else {
                         $error_parts[] = '(Código HTTP inesperado)';
                     }
@@ -158,7 +190,7 @@ function snn_purge_varnish_urls( $urls, $return_details = false ) {
                 $url_detail['error'] = implode( ' - ', $error_parts );
                 
                 if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
-                    error_log( 'SNN Varnish PURGE failed for ' . $full_url . ': ' . $url_detail['error'] . ' (URL construida: ' . $full_url . ')' );
+                    error_log( 'SNN Varnish PURGE failed for ' . $url . ': ' . $url_detail['error'] . ' (Intentado en: ' . $varnish_url . ')' );
                 }
             }
         }
