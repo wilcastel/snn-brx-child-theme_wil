@@ -193,8 +193,17 @@ function snn_cache_admin_page_callback() {
                 break;
                 
             case 'purge_varnish':
-                // Limpiar solo Varnish
-                if ( function_exists( 'snn_purge_varnish_urls' ) ) {
+                // Limpiar solo Varnish (SIN tocar Cached WP Query)
+                if ( function_exists( 'snn_purge_varnish_only' ) ) {
+                    // Usar función específica que NO limpia queries cacheadas
+                    $purged = snn_purge_varnish_only();
+                    if ( $purged ) {
+                        $message = '✅ Cache de Varnish limpiado exitosamente (Cached WP Query NO se limpió)';
+                    } else {
+                        $message = '⚠️ No se pudo limpiar Varnish. Limpia manualmente desde CloudPanel si es necesario.';
+                    }
+                } elseif ( function_exists( 'snn_purge_varnish_urls' ) ) {
+                    // Fallback al método anterior
                     $purge_result = snn_purge_varnish_urls( [ home_url() ], true ); // true = retornar detalles
                     if ( is_array( $purge_result ) ) {
                         $purged = $purge_result['purged'];
