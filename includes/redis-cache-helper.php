@@ -193,17 +193,33 @@ function snn_redis_get_diagnostic() {
  * @return mixed|false Valor del cache o false si no existe
  */
 function snn_redis_get($key, $group = 'default') {
-    // Primero intentar con wp_cache_get (si Redis Object Cache está activo)
-    if (function_exists('wp_cache_get')) {
-        $value = wp_cache_get($key, $group);
-        if ($value !== false) {
-            return $value;
+    // IMPORTANTE: Para el grupo 'cached_queries', siempre usar Redis directo
+    // para evitar conflictos con el plugin de Redis Object Cache que puede usar prefijos diferentes.
+    // Para otros grupos, intentar wp_cache_get primero y luego Redis directo como fallback.
+    
+    $use_direct_redis = ($group === 'cached_queries');
+    $wp_cache_available = function_exists('wp_cache_get');
+    
+    // Si NO es el grupo 'cached_queries', intentar con wp_cache_get primero
+    if (!$use_direct_redis && $wp_cache_available) {
+        $value_from_wp_cache = wp_cache_get($key, $group);
+        if ($value_from_wp_cache !== false) {
+            // Log para diagnóstico si WP_DEBUG está activo
+            if (defined('WP_DEBUG') && WP_DEBUG) {
+                $value_type = gettype($value_from_wp_cache);
+                $value_info = is_array($value_from_wp_cache) ? (isset($value_from_wp_cache['posts']) ? 'array con posts' : 'array sin posts') : $value_type;
+                error_log("SNN Redis GET (wp_cache_get): key='{$key}', group='{$group}', result_type={$value_info}");
+            }
+            return $value_from_wp_cache;
         }
     }
     
-    // Fallback: usar Redis directamente
+    // Usar Redis directamente (siempre para 'cached_queries', o como fallback para otros grupos)
     $redis = snn_redis_connect();
     if (!$redis) {
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log("SNN Redis GET: No se pudo conectar a Redis. key='{$key}', group='{$group}'");
+        }
         return false;
     }
     
@@ -217,13 +233,18 @@ function snn_redis_get($key, $group = 'default') {
         if (defined('WP_DEBUG') && WP_DEBUG) {
             $value_type = $value !== false ? gettype($value) : 'false';
             $value_info = $value !== false && is_array($value) ? (isset($value['posts']) ? 'array con posts' : 'array sin posts') : $value_type;
-            error_log("SNN Redis GET: key='{$full_key}', result_type={$value_info}");
+            if ($use_direct_redis) {
+                $method_used = 'Redis directo (grupo cached_queries)';
+            } else {
+                $method_used = $wp_cache_available ? 'wp_cache_get falló, usando Redis directo' : 'Redis directo (wp_cache_get no disponible)';
+            }
+            error_log("SNN Redis GET ({$method_used}): key='{$full_key}', result_type={$value_info}");
         }
         
         return $value !== false ? $value : false;
     } catch (Exception $e) {
         if (defined('WP_DEBUG') && WP_DEBUG) {
-            error_log("SNN Redis GET error: " . $e->getMessage());
+            error_log("SNN Redis GET error: " . $e->getMessage() . " (key='{$key}', group='{$group}')");
         }
         return false;
     }
@@ -239,14 +260,44 @@ function snn_redis_get($key, $group = 'default') {
  * @return bool True si se guardó correctamente
  */
 function snn_redis_set($key, $value, $group = 'default', $expiration = 0) {
-    // Primero intentar con wp_cache_set (si Redis Object Cache está activo)
-    if (function_exists('wp_cache_set')) {
-        return wp_cache_set($key, $value, $group, $expiration);
+    // IMPORTANTE: Para el grupo 'cached_queries', siempre usar Redis directo
+    // para evitar conflictos con el plugin de Redis Object Cache que puede usar prefijos diferentes.
+    // Para otros grupos, intentar wp_cache_set primero y luego Redis directo como fallback.
+    
+    $use_direct_redis = ($group === 'cached_queries');
+    $wp_cache_available = function_exists('wp_cache_set');
+    $result = false;
+    $method_used = '';
+    
+    // Si NO es el grupo 'cached_queries', intentar con wp_cache_set primero
+    if (!$use_direct_redis && $wp_cache_available) {
+        $result = wp_cache_set($key, $value, $group, $expiration);
+        $method_used = 'wp_cache_set';
+        
+        // Log para diagnóstico si WP_DEBUG está activo
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            $value_type = gettype($value);
+            $value_info = is_array($value) ? (isset($value['posts']) ? 'array con ' . count($value['posts']) . ' posts' : 'array sin posts') : $value_type;
+            error_log("SNN Redis SET (wp_cache_set): key='{$key}', group='{$group}', expiration={$expiration}, value_type={$value_info}, result=" . ($result ? 'true' : 'false'));
+        }
+        
+        // Si wp_cache_set fue exitoso, retornar
+        if ($result) {
+            return $result;
+        }
+        
+        // Si wp_cache_set falló, intentar con Redis directo como fallback
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log("SNN Redis SET: wp_cache_set falló, intentando Redis directo. key='{$key}', group='{$group}'");
+        }
     }
     
-    // Fallback: usar Redis directamente
+    // Usar Redis directamente (siempre para 'cached_queries', o como fallback para otros grupos)
     $redis = snn_redis_connect();
     if (!$redis) {
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log("SNN Redis SET: No se pudo conectar a Redis. key='{$key}', group='{$group}'");
+        }
         return false;
     }
     
@@ -256,13 +307,28 @@ function snn_redis_set($key, $value, $group = 'default', $expiration = 0) {
         // NO hacer serialize() manualmente aquí para evitar doble serialización
         
         if ($expiration > 0) {
-            return $redis->setex($full_key, $expiration, $value);
+            $result = $redis->setex($full_key, $expiration, $value);
         } else {
-            return $redis->set($full_key, $value);
+            $result = $redis->set($full_key, $value);
         }
+        
+        if ($use_direct_redis) {
+            $method_used = 'Redis directo (grupo cached_queries)';
+        } else {
+            $method_used = $method_used ? $method_used . ' + Redis directo' : 'Redis directo (wp_cache_set no disponible)';
+        }
+        
+        // Log para diagnóstico si WP_DEBUG está activo
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            $value_type = gettype($value);
+            $value_info = is_array($value) ? (isset($value['posts']) ? 'array con ' . count($value['posts']) . ' posts' : 'array sin posts') : $value_type;
+            error_log("SNN Redis SET ({$method_used}): key='{$full_key}', expiration={$expiration}, value_type={$value_info}, result=" . ($result ? 'true' : 'false'));
+        }
+        
+        return $result;
     } catch (Exception $e) {
         if (defined('WP_DEBUG') && WP_DEBUG) {
-            error_log("SNN Redis SET error: " . $e->getMessage());
+            error_log("SNN Redis SET error: " . $e->getMessage() . " (key='{$key}', group='{$group}')");
         }
         return false;
     }
