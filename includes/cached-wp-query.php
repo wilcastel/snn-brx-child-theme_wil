@@ -1003,6 +1003,9 @@ function bl_setup_cached_post_data( $loop_object, $loop_key, $query_obj ) {
  ******************/
 
 /* Limpiar todos los cachés cuando se guarda un post (publicar o actualizar) */
+// NOTA: El cache de Cached WP Query NO se limpia automáticamente para evitar regeneración constante
+// Solo se limpia Varnish para que muestre contenido actualizado, pero el cache de queries persiste
+// Para limpiar el cache de queries, usar el botón "Limpiar Solo Queries" en el admin
 add_action( 'save_post', 'bl_clear_cached_queries_on_post_save', 10, 2 );
 function bl_clear_cached_queries_on_post_save( $post_id, $post ) {
     // Evitar limpiar en autosaves y revisiones
@@ -1014,23 +1017,30 @@ function bl_clear_cached_queries_on_post_save( $post_id, $post ) {
         return;
     }
     
-    // Limpiar nuestro sistema de cache de queries
-    bl_clear_cached_query();
+    // IMPORTANTE: NO limpiar el cache de queries automáticamente
+    // El cache de queries es casi siempre fijo y solo se debe limpiar manualmente
+    // bl_clear_cached_query(); // DESACTIVADO - Solo limpiar manualmente
     
-    // Limpiar otros sistemas de cache (Varnish, Nginx, etc.) usando el helper
-    if ( function_exists( 'snn_purge_all_caches' ) ) {
-        snn_purge_all_caches( $post_id );
+    // Solo limpiar Varnish para que muestre contenido actualizado
+    // El cache de queries en Redis persiste y se reutiliza
+    if ( function_exists( 'snn_purge_varnish_only' ) ) {
+        snn_purge_varnish_only( $post_id, false ); // false = no hacer warmup automático
+    } elseif ( function_exists( 'snn_purge_all_caches' ) ) {
+        // Fallback: usar función completa pero solo limpiará Varnish si está configurado correctamente
+        // snn_purge_all_caches( $post_id ); // Comentado para evitar limpiar queries
     }
 }
 
 /* Limpiar todos los cachés cuando se elimina un post */
+// NOTA: Similar al save_post, solo limpiamos Varnish, no el cache de queries
 add_action( 'delete_post', 'bl_clear_cached_queries_on_post_delete', 10, 1 );
 function bl_clear_cached_queries_on_post_delete( $post_id ) {
-    bl_clear_cached_query();
+    // IMPORTANTE: NO limpiar el cache de queries automáticamente
+    // bl_clear_cached_query(); // DESACTIVADO - Solo limpiar manualmente
     
-    // Limpiar otros sistemas de cache
-    if ( function_exists( 'snn_purge_all_caches' ) ) {
-        snn_purge_all_caches( $post_id );
+    // Solo limpiar Varnish
+    if ( function_exists( 'snn_purge_varnish_only' ) ) {
+        snn_purge_varnish_only( $post_id, false ); // false = no hacer warmup automático
     }
 }
 
@@ -1050,15 +1060,17 @@ if ( defined('WP_DEBUG') && WP_DEBUG && defined('BL_CACHE_DEBUG') && BL_CACHE_DE
 }
 
 /* Limpiar todos los cachés cuando cambia el estado de un post (publicado, borrador, etc.) */
+// NOTA: Similar a save_post, solo limpiamos Varnish, no el cache de queries
 add_action( 'transition_post_status', 'bl_clear_cached_queries_on_status_change', 10, 3 );
 function bl_clear_cached_queries_on_status_change( $new_status, $old_status, $post ) {
     // Limpiar si cambia a/desde 'publish' para cualquier tipo de post (incluyendo CPTs)
     if ( $new_status === 'publish' || $old_status === 'publish' ) {
-        bl_clear_cached_query();
+        // IMPORTANTE: NO limpiar el cache de queries automáticamente
+        // bl_clear_cached_query(); // DESACTIVADO - Solo limpiar manualmente
         
-        // Limpiar otros sistemas de cache
-        if ( function_exists( 'snn_purge_all_caches' ) ) {
-            snn_purge_all_caches( $post->ID );
+        // Solo limpiar Varnish
+        if ( function_exists( 'snn_purge_varnish_only' ) ) {
+            snn_purge_varnish_only( $post->ID, false ); // false = no hacer warmup automático
         }
     }
 }
