@@ -130,6 +130,18 @@ fi
 COMMIT_HASH=$(git rev-parse --short HEAD)
 info "Commit creado: ${COMMIT_HASH}"
 
+# Hacer push a trycode si hay remoto configurado
+if git remote -v | grep -q origin; then
+    info "Haciendo push a trycode en remoto..."
+    if git push origin trycode; then
+        success "Push exitoso a origin/trycode"
+    else
+        warning "No se pudo hacer push. Puedes hacerlo manualmente con: git push origin trycode"
+    fi
+else
+    warning "No hay remoto configurado. No se puede hacer push automático."
+fi
+
 # Volver a la rama original
 info "Volviendo a rama ${CURRENT_BRANCH}..."
 git checkout "${CURRENT_BRANCH}"
@@ -182,8 +194,13 @@ fi
 echo ""
 info "Próximos pasos:"
 echo "  1. Revisa el commit en trycode: git show trycode"
-echo "  2. Si quieres hacer push: git push origin trycode"
-echo "  3. Si quieres probar localmente: git checkout trycode"
+if git remote -v | grep -q origin; then
+    echo "  2. ✅ Push realizado automáticamente a origin/trycode"
+else
+    echo "  2. ⚠️  No hay remoto configurado. Haz push manualmente: git push origin trycode"
+fi
+echo "  3. Prueba en el servidor de desarrollo"
+echo "  4. Si funciona, haz commit en ${CURRENT_BRANCH}: git add -A && git commit -m '...'"
 if [ -n "$STASH_TO_RESTORE" ]; then
     echo ""
     info "Para limpiar el stash (opcional): git stash drop ${STASH_TO_RESTORE}"
