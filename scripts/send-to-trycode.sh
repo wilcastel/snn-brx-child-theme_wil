@@ -65,9 +65,11 @@ COMMIT_MSG="${1:-wip: Cambios para probar en trycode desde ${CURRENT_BRANCH}}"
 
 info "Mensaje de commit: ${COMMIT_MSG}"
 
-# Guardar cambios actuales en stash
-info "Guardando cambios actuales..."
-git stash push -m "Temporal para send-to-trycode - $(date +%Y%m%d_%H%M%S)"
+# Guardar cambios actuales en stash con un identificador único
+STASH_MESSAGE="send-to-trycode-${CURRENT_BRANCH}-$(date +%Y%m%d_%H%M%S)"
+info "Guardando cambios actuales en stash: ${STASH_MESSAGE}..."
+git stash push -m "${STASH_MESSAGE}"
+STASH_INDEX=$(git stash list | grep -m1 "${STASH_MESSAGE}" | cut -d: -f1 | sed 's/[^0-9]//g')
 
 # Verificar si trycode existe localmente
 if git show-ref --verify --quiet refs/heads/trycode; then
@@ -122,18 +124,58 @@ info "Commit creado: ${COMMIT_HASH}"
 info "Volviendo a rama ${CURRENT_BRANCH}..."
 git checkout "${CURRENT_BRANCH}"
 
-# Aplicar cambios de vuelta (si quedaron en stash)
-if git stash list | grep -q "send-to-trycode"; then
-    info "Aplicando cambios de vuelta a ${CURRENT_BRANCH}..."
-    git stash pop
+# Restaurar cambios de vuelta desde stash
+info "Restaurando cambios en ${CURRENT_BRANCH}..."
+if [ -n "$STASH_TO_RESTORE" ]; then
+    # Usar el stash que guardamos antes
+    if git stash apply "${STASH_TO_RESTORE}"; then
+        success "Cambios restaurados exitosamente en ${CURRENT_BRANCH}"
+        info "El stash se mantiene guardado. Puedes eliminarlo manualmente si quieres:"
+        info "  git stash drop ${STASH_TO_RESTORE}"
+    else
+        warning "Hubo conflictos al restaurar los cambios."
+        warning "El stash sigue disponible: ${STASH_TO_RESTORE}"
+        info "Puedes restaurar manualmente con: git stash apply ${STASH_TO_RESTORE}"
+        info "O ver el contenido con: git stash show -p ${STASH_TO_RESTORE}"
+    fi
+else
+    # Fallback: buscar el stash más reciente con nuestro mensaje
+    RESTORE_STASH=$(git stash list | grep -m1 "send-to-trycode-${CURRENT_BRANCH}" | cut -d: -f1)
+    if [ -n "$RESTORE_STASH" ]; then
+        info "Aplicando stash encontrado: ${RESTORE_STASH}"
+        if git stash apply "${RESTORE_STASH}"; then
+            success "Cambios restaurados exitosamente"
+        else
+            warning "Hubo conflictos al restaurar. Revisa manualmente con: git stash list"
+        fi
+    else
+        warning "No se encontró el stash para restaurar."
+        info "Los cambios pueden estar solo en trycode. Verifica con:"
+        info "  git checkout trycode"
+        info "  git diff ${CURRENT_BRANCH}"
+        info ""
+        info "O ver todos los stashes: git stash list"
+    fi
 fi
 
 success "¡Listo! Cambios enviados a trycode"
+echo ""
+info "Resumen:"
+echo "  - Rama actual: ${CURRENT_BRANCH}"
+echo "  - Cambios enviados a: trycode (commit ${COMMIT_HASH})"
+if [ -n "$STASH_TO_RESTORE" ]; then
+    echo "  - Cambios restaurados en: ${CURRENT_BRANCH}"
+    echo "  - Stash guardado: ${STASH_TO_RESTORE}"
+else
+    echo "  - ⚠️  Verifica que los cambios se restauraron correctamente"
+fi
 echo ""
 info "Próximos pasos:"
 echo "  1. Revisa el commit en trycode: git show trycode"
 echo "  2. Si quieres hacer push: git push origin trycode"
 echo "  3. Si quieres probar localmente: git checkout trycode"
-echo ""
-info "Para volver a tu rama: git checkout ${CURRENT_BRANCH}"
+if [ -n "$STASH_TO_RESTORE" ]; then
+    echo ""
+    info "Para limpiar el stash (opcional): git stash drop ${STASH_TO_RESTORE}"
+fi
 
