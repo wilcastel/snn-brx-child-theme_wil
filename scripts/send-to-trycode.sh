@@ -93,11 +93,21 @@ else
     git checkout -b trycode "${CURRENT_BRANCH}"
 fi
 
-# Aplicar los cambios guardados
-info "Aplicando cambios..."
-if ! git stash pop; then
-    error "Error al aplicar cambios. Puede haber conflictos."
-    warning "Los cambios están guardados en stash. Usa 'git stash list' para verlos."
+# Aplicar los cambios guardados (sin eliminar del stash - usamos apply, no pop)
+info "Aplicando cambios en trycode..."
+# Buscar el stash más reciente con nuestro mensaje
+LATEST_STASH=$(git stash list | grep -m1 "send-to-trycode-${CURRENT_BRANCH}" | cut -d: -f1)
+if [ -n "$LATEST_STASH" ]; then
+    if ! git stash apply "${LATEST_STASH}"; then
+        error "Error al aplicar cambios. Puede haber conflictos."
+        warning "Los cambios están guardados en stash. Usa 'git stash list' para verlos."
+        git checkout "${CURRENT_BRANCH}"
+        exit 1
+    fi
+    # Guardar referencia al stash para restaurarlo después
+    STASH_TO_RESTORE="${LATEST_STASH}"
+else
+    error "No se encontró el stash guardado."
     git checkout "${CURRENT_BRANCH}"
     exit 1
 fi
