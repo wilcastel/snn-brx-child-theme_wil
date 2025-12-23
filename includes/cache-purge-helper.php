@@ -245,6 +245,103 @@ function snn_purge_nginx_cache() {
 }
 
 /**
+ * Forzar regeneración del cache de Cached WP Query haciendo una petición HTTP interna
+ * Esto asegura que el cache se regenere incluso cuando Varnish está sirviendo páginas cacheadas
+ * 
+ * @param string|array $urls URL o array de URLs a visitar para regenerar cache
+ * @return bool True si se hizo la petición correctamente
+ */
+function snn_warmup_cached_queries( $urls = null ) {
+    if ( $urls === null ) {
+        $urls = [ home_url() ];
+    }
+    
+    if ( !is_array( $urls ) ) {
+        $urls = [ $urls ];
+    }
+    
+    if ( !function_exists( 'curl_init' ) ) {
+        return false;
+    }
+    
+    $success = false;
+    
+    foreach ( $urls as $url ) {
+        // Hacer petición HTTP interna con header especial para forzar procesamiento
+        // Usar localhost directamente para evitar pasar por Varnish
+        $parsed_url = parse_url( $url );
+        if ( $parsed_url === false ) {
+            continue;
+        }
+        
+        $host = isset( $parsed_url['host'] ) ? $parsed_url['host'] : 'localhost';
+        $path = isset( $parsed_url['path'] ) ? $parsed_url['path'] : '/';
+        $query = isset( $parsed_url['query'] ) ? '?' . $parsed_url['query'] : '';
+        
+        // Intentar conectar directamente al puerto de PHP-FPM o Nginx (no Varnish)
+        // Usar el puerto interno si está disponible, o localhost:80
+        $internal_url = 'http://127.0.0.1' . $path . $query;
+        
+        $ch = curl_init( $internal_url );
+        curl_setopt( $ch, CURLOPT_RETURNTRANSFER, true );
+        curl_setopt( $ch, CURLOPT_TIMEOUT, 30 ); // Timeout más largo para permitir generación de cache
+        curl_setopt( $ch, CURLOPT_CONNECTTIMEOUT, 5 );
+        curl_setopt( $ch, CURLOPT_HTTPHEADER, [
+            'Host: ' . $host,
+            'X-Warmup-Cache: 1', // Header especial para identificar peticiones de warmup
+            'User-Agent: WordPress Cache Warmup',
+        ] );
+        curl_setopt( $ch, CURLOPT_FOLLOWLOCATION, false );
+        // Usar GET request (no HEAD) para que WordPress procese completamente la página y genere el cache
+        // Pero limitar el tamaño de la respuesta para no consumir demasiada memoria
+        curl_setopt( $ch, CURLOPT_MAXFILESIZE, 1024 * 1024 ); // Máximo 1MB de respuesta
+        
+        $response = curl_exec( $ch );
+        $http_code = curl_getinfo( $ch, CURLINFO_HTTP_CODE );
+        curl_close( $ch );
+        
+        if ( $http_code >= 200 && $http_code < 400 ) {
+            $success = true;
+        }
+    }
+    
+    return $success;
+}
+
+/**
+ * Limpiar solo Varnish (sin tocar otros caches)
+ * 
+ * @param int|null $post_id ID del post (opcional, para limpiar URLs específicas)
+ * @param bool $warmup_cache Si es true, fuerza regeneración del cache después de limpiar Varnish
+ * @return bool True si se limpió correctamente
+ */
+function snn_purge_varnish_only( $post_id = null, $warmup_cache = true ) {
+    $varnish_urls = [ home_url() ];
+    
+    if ( $post_id ) {
+        $varnish_urls[] = get_permalink( $post_id );
+        $varnish_urls[] = home_url(); // Homepage también
+    }
+    
+    $varnish_purged = snn_purge_varnish_urls( $varnish_urls );
+    
+    // Después de limpiar Varnish, forzar regeneración del cache de queries
+    // Esto asegura que el cache se regenere incluso para usuarios anónimos
+    if ( $varnish_purged > 0 && $warmup_cache ) {
+        // Hacer warmup en background (no bloquear la respuesta)
+        if ( function_exists( 'wp_schedule_single_event' ) ) {
+            // Usar cron de WordPress para hacer warmup en background
+            wp_schedule_single_event( time() + 2, 'snn_warmup_cached_queries', [ $varnish_urls ] );
+        } else {
+            // Fallback: hacer warmup directamente (puede ser más lento)
+            snn_warmup_cached_queries( $varnish_urls );
+        }
+    }
+    
+    return $varnish_purged > 0;
+}
+
+/**
  * Limpiar todos los sistemas de cache
  * 
  * @param int|null $post_id ID del post (opcional, para limpiar URLs específicas)
@@ -276,15 +373,7 @@ function snn_purge_all_caches( $post_id = null ) {
     }
     
     // 4. Limpiar Varnish
-    $varnish_urls = [ home_url() ];
-    
-    if ( $post_id ) {
-        $varnish_urls[] = get_permalink( $post_id );
-        $varnish_urls[] = home_url(); // Homepage también
-    }
-    
-    $varnish_purged = snn_purge_varnish_urls( $varnish_urls );
-    $results['varnish'] = $varnish_purged > 0;
+    $results['varnish'] = snn_purge_varnish_only( $post_id );
     
     // 5. Limpiar Nginx FastCGI Cache
     $results['nginx'] = snn_purge_nginx_cache();
@@ -319,6 +408,13 @@ function snn_purge_cache_on_post_save( $post_id, $post ) {
     // Limpiar todos los sistemas de cache
     snn_purge_all_caches( $post_id );
 }
+
+// Hook para hacer warmup del cache cuando se programa (via cron)
+add_action( 'snn_warmup_cached_queries', function( $urls ) {
+    if ( function_exists( 'snn_warmup_cached_queries' ) ) {
+        snn_warmup_cached_queries( $urls );
+    }
+}, 10, 1 );
 
 // Hook para limpiar cache cuando se guarda un post
 add_action( 'save_post', 'snn_purge_cache_on_post_save', 99, 2 );
