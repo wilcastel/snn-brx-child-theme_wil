@@ -72,12 +72,20 @@ function snn_get_active_cached_queries_info() {
                     ];
                 }
             }
+        } elseif ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+            // Log para diagnóstico si no se encontró el storage
+            $storage_type = $redis_storage === false ? 'false' : ( is_array( $redis_storage ) ? 'array sin posts' : gettype( $redis_storage ) );
+            error_log( 'SNN Cache Admin: No se encontró bl_cached_queries_storage en Redis. Tipo: ' . $storage_type );
         }
         
         // Método 2: Buscar directamente en Redis todas las claves de cached queries
+        // Este método es más confiable porque busca directamente las claves, no depende del storage
         if ( function_exists( 'snn_redis_find_keys' ) ) {
             $redis_keys = snn_redis_find_keys( 'bl_cached_query_*', 'cached_queries' );
             if ( !empty( $redis_keys ) ) {
+                if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+                    error_log( 'SNN Cache Admin: Encontradas ' . count( $redis_keys ) . ' claves de cache en Redis usando búsqueda directa' );
+                }
                 foreach ( $redis_keys as $key ) {
                     if ( preg_match( '/bl_cached_query_(.+)$/', $key, $matches ) ) {
                         $cache_id = $matches[1];
@@ -92,12 +100,19 @@ function snn_get_active_cached_queries_info() {
                                     'source' => 'Redis (búsqueda directa)',
                                     'posts_count' => count( $cache_data['posts'] ),
                                 ];
+                            } elseif ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+                                $data_type = $cache_data === false ? 'false' : ( is_array( $cache_data ) ? 'array sin posts' : gettype( $cache_data ) );
+                                error_log( 'SNN Cache Admin: Cache ID "' . $cache_id . '" encontrado en Redis pero datos inválidos. Tipo: ' . $data_type );
                             }
                         }
                     }
                 }
+            } elseif ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+                error_log( 'SNN Cache Admin: No se encontraron claves de cache en Redis usando búsqueda directa' );
             }
         }
+    } elseif ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+        error_log( 'SNN Cache Admin: Redis no disponible o snn_redis_get no está disponible. Redis disponible: ' . ( $redis_available ? 'Sí' : 'No' ) );
     }
     
     // También verificar variable global

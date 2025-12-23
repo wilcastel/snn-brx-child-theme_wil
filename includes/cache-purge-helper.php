@@ -79,13 +79,34 @@ function snn_purge_varnish_urls( $urls, $return_details = false ) {
                 continue;
             }
             
+            // Parsear URL y construir correctamente
             $parsed_url = parse_url( $url );
+            
+            // Si la URL no se puede parsear, intentar construirla desde home_url()
+            if ( $parsed_url === false || ( !isset( $parsed_url['host'] ) && !isset( $parsed_url['path'] ) ) ) {
+                $home_url = home_url();
+                $parsed_url = parse_url( $home_url );
+                if ( $parsed_url === false ) {
+                    $url_detail['error'] = 'No se pudo parsear la URL: ' . $url;
+                    $details[] = $url_detail;
+                    continue;
+                }
+            }
+            
             $host = isset( $parsed_url['host'] ) ? $parsed_url['host'] : ( isset( $_SERVER['HTTP_HOST'] ) ? $_SERVER['HTTP_HOST'] : 'localhost' );
-            $scheme = isset( $parsed_url['scheme'] ) ? $parsed_url['scheme'] : 'http';
+            $scheme = isset( $parsed_url['scheme'] ) ? $parsed_url['scheme'] : ( is_ssl() ? 'https' : 'http' );
             $path = isset( $parsed_url['path'] ) ? $parsed_url['path'] : '/';
+            $query = isset( $parsed_url['query'] ) ? '?' . $parsed_url['query'] : '';
             
             // Construir URL completa
-            $full_url = $scheme . '://' . $host . $path;
+            $full_url = $scheme . '://' . $host . $path . $query;
+            
+            // Validar que la URL sea válida
+            if ( filter_var( $full_url, FILTER_VALIDATE_URL ) === false ) {
+                $url_detail['error'] = 'URL inválida construida: ' . $full_url;
+                $details[] = $url_detail;
+                continue;
+            }
             
             $ch = curl_init( $full_url );
             curl_setopt( $ch, CURLOPT_CUSTOMREQUEST, 'PURGE' );
@@ -94,6 +115,7 @@ function snn_purge_varnish_urls( $urls, $return_details = false ) {
             curl_setopt( $ch, CURLOPT_CONNECTTIMEOUT, 1 );
             curl_setopt( $ch, CURLOPT_HTTPHEADER, [
                 'Host: ' . $host,
+                'X-Purge-Method: PURGE',
             ] );
             
             $response = curl_exec( $ch );
@@ -113,7 +135,9 @@ function snn_purge_varnish_urls( $urls, $return_details = false ) {
                 if ( $http_code ) {
                     $error_parts[] = 'HTTP ' . $http_code;
                     // Agregar descripción del código HTTP
-                    if ( $http_code === 405 ) {
+                    if ( $http_code === 400 ) {
+                        $error_parts[] = '(Bad Request - La URL puede ser inválida o falta algún header requerido. Verifica que la URL sea correcta y que Varnish esté configurado para aceptar PURGE)';
+                    } elseif ( $http_code === 405 ) {
                         $error_parts[] = '(Método no permitido - Varnish puede no estar configurado para aceptar PURGE)';
                     } elseif ( $http_code === 403 ) {
                         $error_parts[] = '(Prohibido - Varnish puede requerir autenticación o IP permitida)';
@@ -121,6 +145,8 @@ function snn_purge_varnish_urls( $urls, $return_details = false ) {
                         $error_parts[] = '(No encontrado)';
                     } elseif ( $http_code === 0 ) {
                         $error_parts[] = '(Sin conexión - Varnish puede no estar corriendo o no ser accesible)';
+                    } else {
+                        $error_parts[] = '(Código HTTP inesperado)';
                     }
                 }
                 if ( $curl_error ) {
@@ -132,7 +158,7 @@ function snn_purge_varnish_urls( $urls, $return_details = false ) {
                 $url_detail['error'] = implode( ' - ', $error_parts );
                 
                 if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
-                    error_log( 'SNN Varnish PURGE failed for ' . $full_url . ': ' . $url_detail['error'] );
+                    error_log( 'SNN Varnish PURGE failed for ' . $full_url . ': ' . $url_detail['error'] . ' (URL construida: ' . $full_url . ')' );
                 }
             }
         }
