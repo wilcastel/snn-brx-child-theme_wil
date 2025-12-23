@@ -323,6 +323,46 @@ function snn_redis_flush_group($group = null) {
 }
 
 /**
+ * Buscar claves en Redis usando un patrón
+ * 
+ * @param string $pattern Patrón de búsqueda (ej: 'bl_cached_query_*')
+ * @param string $group Grupo del cache
+ * @return array Array de claves encontradas (sin el prefijo completo)
+ */
+function snn_redis_find_keys( $pattern, $group = 'default' ) {
+    $redis = snn_redis_connect();
+    if ( !$redis ) {
+        return [];
+    }
+    
+    try {
+        // Construir el patrón completo con el prefijo
+        $full_pattern = REDIS_OBJECT_CACHE_PREFIX . $group . ':' . $pattern;
+        $keys = $redis->keys( $full_pattern );
+        
+        if ( empty( $keys ) ) {
+            return [];
+        }
+        
+        // Remover el prefijo completo para retornar solo las claves
+        $prefix_length = strlen( REDIS_OBJECT_CACHE_PREFIX . $group . ':' );
+        $clean_keys = [];
+        foreach ( $keys as $key ) {
+            if ( strlen( $key ) > $prefix_length ) {
+                $clean_keys[] = substr( $key, $prefix_length );
+            }
+        }
+        
+        return $clean_keys;
+    } catch ( Exception $e ) {
+        if ( defined( 'WP_DEBUG' ) && WP_DEBUG ) {
+            error_log( "SNN Redis FIND KEYS error: " . $e->getMessage() );
+        }
+        return [];
+    }
+}
+
+/**
  * Obtener estadísticas de Redis
  * 
  * @return array|false Estadísticas o false si falla

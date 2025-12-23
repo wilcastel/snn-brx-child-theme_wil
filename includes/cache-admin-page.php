@@ -51,34 +51,88 @@ function snn_cache_admin_page_callback() {
         switch ( $action ) {
             case 'purge_all':
                 // Limpiar todo
-                if ( function_exists( 'bl_clear_cached_query' ) ) {
-                    bl_clear_cached_query();
-                }
+                $results = [];
                 if ( function_exists( 'snn_purge_all_caches' ) ) {
                     $results = snn_purge_all_caches();
+                } else {
+                    // Fallback manual si la función no está disponible
+                    if ( function_exists( 'bl_clear_cached_query' ) ) {
+                        bl_clear_cached_query();
+                        $results['queries'] = true;
+                    }
+                    if ( function_exists( 'wp_cache_flush' ) ) {
+                        $results['wordpress'] = wp_cache_flush();
+                    }
                 }
-                $message = '✅ Cache limpiado exitosamente';
+                
+                // Contar éxitos
+                $success_count = count( array_filter( $results ) );
+                $total_count = count( $results );
+                
+                if ( $success_count > 0 ) {
+                    $message = '✅ Cache limpiado exitosamente (' . $success_count . '/' . $total_count . ' sistemas)';
+                } else {
+                    $message = '⚠️ No se pudo limpiar ningún sistema de cache';
+                }
                 break;
                 
             case 'purge_redis':
                 // Limpiar solo Redis
+                $redis_cleared = false;
                 if ( function_exists( 'bl_clear_cached_query' ) ) {
                     bl_clear_cached_query();
+                    $redis_cleared = true;
                 }
                 if ( function_exists( 'snn_redis_flush_group' ) ) {
-                    snn_redis_flush_group( 'cached_queries' );
+                    $flushed = snn_redis_flush_group( 'cached_queries' );
+                    $redis_cleared = true;
                 }
                 if ( function_exists( 'wp_cache_flush' ) ) {
                     wp_cache_flush();
+                    $redis_cleared = true;
                 }
-                $message = '✅ Cache de Redis limpiado exitosamente';
+                $message = $redis_cleared ? '✅ Cache de Redis limpiado exitosamente' : '⚠️ No se pudo limpiar Redis';
                 break;
                 
             case 'purge_varnish':
                 // Limpiar solo Varnish
                 if ( function_exists( 'snn_purge_varnish_urls' ) ) {
-                    $purged = snn_purge_varnish_urls( [ home_url() ] );
-                    $message = $purged > 0 ? '✅ Cache de Varnish limpiado exitosamente' : '⚠️ No se pudo limpiar Varnish';
+                    $purge_result = snn_purge_varnish_urls( [ home_url() ], true ); // true = retornar detalles
+                    if ( is_array( $purge_result ) ) {
+                        $purged = $purge_result['purged'];
+                        $details = $purge_result['details'];
+                        if ( $purged > 0 ) {
+                            $message = '✅ Cache de Varnish limpiado exitosamente';
+                        } else {
+                            // Construir mensaje detallado con información del error
+                            $error_msg = '⚠️ No se pudo limpiar Varnish.';
+                            if ( !empty( $details ) ) {
+                                $error_details = [];
+                                foreach ( $details as $detail ) {
+                                    if ( isset( $detail['error'] ) ) {
+                                        $error_details[] = $detail['error'];
+                                    }
+                                }
+                                if ( !empty( $error_details ) ) {
+                                    $error_msg .= ' Detalles: ' . implode( '; ', $error_details );
+                                }
+                            }
+                            $message = $error_msg . ' Limpia manualmente desde CloudPanel si es necesario.';
+                        }
+                    } else {
+                        // Fallback al comportamiento anterior
+                        $purged = is_numeric( $purge_result ) ? $purge_result : 0;
+                        if ( $purged > 0 ) {
+                            $message = '✅ Cache de Varnish limpiado exitosamente';
+                        } else {
+                            // Verificar si curl está disponible
+                            if ( !function_exists( 'curl_init' ) ) {
+                                $message = '⚠️ No se pudo limpiar Varnish: curl no está disponible. Limpia manualmente desde CloudPanel.';
+                            } else {
+                                $message = '⚠️ No se pudo limpiar Varnish. Puede requerir configuración en Varnish para aceptar PURGE. Limpia manualmente desde CloudPanel.';
+                            }
+                        }
+                    }
                 } else {
                     $message = '⚠️ Función de limpieza de Varnish no disponible';
                 }
@@ -96,12 +150,28 @@ function snn_cache_admin_page_callback() {
         echo '<div class="notice notice-success is-dismissible"><p>' . esc_html( $message ) . '</p></div>';
         
         if ( !empty( $results ) ) {
-            echo '<div class="notice notice-info"><p><strong>Resultados detallados:</strong></p><ul>';
-            foreach ( $results as $system => $success ) {
-                $icon = $success ? '✅' : '❌';
-                echo '<li>' . $icon . ' ' . ucfirst( $system ) . '</li>';
+            $success_count = count( array_filter( $results ) );
+            $total_count = count( $results );
+            
+            if ( $success_count < $total_count ) {
+                // Solo mostrar resultados detallados si hubo algunos fallos
+                echo '<div class="notice notice-info"><p><strong>Resultados detallados:</strong></p><ul>';
+                foreach ( $results as $system => $success ) {
+                    $icon = $success ? '✅' : '❌';
+                    $system_name = ucfirst( $system );
+                    // Traducir nombres de sistemas
+                    $system_names = [
+                        'redis' => 'Redis',
+                        'varnish' => 'Varnish',
+                        'nginx' => 'Nginx',
+                        'wordpress' => 'WordPress',
+                        'queries' => 'Queries Cacheadas',
+                    ];
+                    $system_name = isset( $system_names[strtolower( $system )] ) ? $system_names[strtolower( $system )] : $system_name;
+                    echo '<li>' . $icon . ' ' . esc_html( $system_name ) . '</li>';
+                }
+                echo '</ul></div>';
             }
-            echo '</ul></div>';
         }
     }
     
@@ -184,10 +254,78 @@ function snn_cache_admin_page_callback() {
         }
     }
     
-    // Obtener cache IDs activos
+    // Obtener cache IDs activos (de variable global y Redis)
     $active_cache_ids = [];
+    $cache_info = [];
+    
+    // Verificar en variable global
     if ( function_exists( 'bl_get_cached_query_ids' ) ) {
         $active_cache_ids = bl_get_cached_query_ids();
+    }
+    
+    // Verificar también en Redis si está disponible
+    if ( function_exists( 'snn_redis_get' ) && $redis_available ) {
+        // Método 1: Intentar obtener el storage completo de Redis
+        $redis_storage = snn_redis_get( 'bl_cached_queries_storage', 'cached_queries' );
+        if ( $redis_storage !== false && is_array( $redis_storage ) && isset( $redis_storage['posts'] ) ) {
+            $redis_cache_ids = array_keys( $redis_storage['posts'] );
+            // Combinar con los IDs de variable global
+            $active_cache_ids = array_unique( array_merge( $active_cache_ids, $redis_cache_ids ) );
+            
+            // Obtener información de cada cache
+            foreach ( $redis_cache_ids as $cache_id ) {
+                $cache_data = snn_redis_get( 'bl_cached_query_' . $cache_id, 'cached_queries' );
+                if ( $cache_data !== false && is_array( $cache_data ) && isset( $cache_data['posts'] ) ) {
+                    $cache_info[$cache_id] = [
+                        'source' => 'Redis',
+                        'posts_count' => count( $cache_data['posts'] ),
+                    ];
+                }
+            }
+        }
+        
+        // Método 2: Buscar directamente en Redis todas las claves de cached queries
+        // Esto es más confiable porque busca individualmente cada cache
+        if ( function_exists( 'snn_redis_find_keys' ) ) {
+            $redis_keys = snn_redis_find_keys( 'bl_cached_query_*', 'cached_queries' );
+            if ( !empty( $redis_keys ) ) {
+                foreach ( $redis_keys as $key ) {
+                    // Extraer cache_id de la clave (formato: bl_cached_query_{cache_id})
+                    if ( preg_match( '/bl_cached_query_(.+)$/', $key, $matches ) ) {
+                        $cache_id = $matches[1];
+                        if ( !in_array( $cache_id, $active_cache_ids ) ) {
+                            $active_cache_ids[] = $cache_id;
+                        }
+                        
+                        // Obtener información del cache
+                        if ( !isset( $cache_info[$cache_id] ) ) {
+                            $cache_data = snn_redis_get( 'bl_cached_query_' . $cache_id, 'cached_queries' );
+                            if ( $cache_data !== false && is_array( $cache_data ) && isset( $cache_data['posts'] ) ) {
+                                $cache_info[$cache_id] = [
+                                    'source' => 'Redis (búsqueda directa)',
+                                    'posts_count' => count( $cache_data['posts'] ),
+                                ];
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // También verificar variable global para información adicional
+    global $bl_cached_queries_storage;
+    if ( isset( $bl_cached_queries_storage['posts'] ) && is_array( $bl_cached_queries_storage['posts'] ) ) {
+        foreach ( $bl_cached_queries_storage['posts'] as $cache_id => $posts ) {
+            if ( !isset( $cache_info[$cache_id] ) ) {
+                $cache_info[$cache_id] = [
+                    'source' => 'Variable Global',
+                    'posts_count' => count( $posts ),
+                ];
+            } else {
+                $cache_info[$cache_id]['source'] = 'Redis + Variable Global';
+            }
+        }
     }
     
     ?>
@@ -262,9 +400,33 @@ function snn_cache_admin_page_callback() {
                         </td>
                         <td>
                             <?php if ( !empty( $active_cache_ids ) ): ?>
-                                Cache IDs activos: <?php echo esc_html( implode( ', ', $active_cache_ids ) ); ?>
+                                <strong>Cache IDs activos:</strong> <?php echo esc_html( implode( ', ', $active_cache_ids ) ); ?>
+                                <?php if ( !empty( $cache_info ) ): ?>
+                                    <br><small>
+                                    <?php foreach ( $cache_info as $cache_id => $info ): ?>
+                                        • <?php echo esc_html( $cache_id ); ?>: <?php echo esc_html( $info['posts_count'] ); ?> posts (<?php echo esc_html( $info['source'] ); ?>)
+                                    <?php endforeach; ?>
+                                    </small>
+                                <?php endif; ?>
                             <?php else: ?>
-                                No hay cache activo en este momento
+                                <div>
+                                    <strong>No hay cache activo en este momento</strong>
+                                    <br><small style="color: #666;">
+                                        ℹ️ El cache solo se crea cuando se visita una página que usa Cached WP Query. 
+                                        Si acabas de configurar una página con este sistema, visita esa página primero para que se genere el cache.
+                                        <br>
+                                        El cache se guarda en Redis con TTL de 1 hora y se limpia automáticamente cuando publicas/actualizas contenido.
+                                    </small>
+                                    <?php if ( $redis_available ): ?>
+                                        <br><small style="color: #666;">
+                                            ✅ Redis está disponible - El cache se guardará automáticamente cuando se use.
+                                        </small>
+                                    <?php else: ?>
+                                        <br><small style="color: #d63638;">
+                                            ⚠️ Redis no está disponible - El cache solo funcionará en memoria durante la petición actual.
+                                        </small>
+                                    <?php endif; ?>
+                                </div>
                             <?php endif; ?>
                         </td>
                     </tr>
