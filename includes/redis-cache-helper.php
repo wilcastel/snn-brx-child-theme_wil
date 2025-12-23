@@ -63,7 +63,19 @@ function snn_redis_connect() {
             
             // Configurar opciones de Redis
             $redis->setOption(Redis::OPT_SERIALIZER, Redis::SERIALIZER_PHP);
-            $redis->setOption(Redis::OPT_COMPRESSION, Redis::COMPRESSION_LZ4);
+            
+            // Configurar compresión solo si está disponible
+            // LZ4 puede no estar disponible en todas las versiones de php-redis
+            if (defined('Redis::COMPRESSION_LZ4')) {
+                $redis->setOption(Redis::OPT_COMPRESSION, Redis::COMPRESSION_LZ4);
+            } elseif (defined('Redis::COMPRESSION_ZSTD')) {
+                // Fallback a ZSTD si LZ4 no está disponible
+                $redis->setOption(Redis::OPT_COMPRESSION, Redis::COMPRESSION_ZSTD);
+            } elseif (defined('Redis::COMPRESSION_LZF')) {
+                // Fallback a LZF si las anteriores no están disponibles
+                $redis->setOption(Redis::OPT_COMPRESSION, Redis::COMPRESSION_LZF);
+            }
+            // Si ninguna compresión está disponible, simplemente no la usamos
             
         } catch (Exception $e) {
             if (defined('WP_DEBUG') && WP_DEBUG) {
