@@ -289,15 +289,18 @@ function snn_purge_cache_on_post_save( $post_id, $post ) {
 }
 
 // Hook para limpiar cache cuando se guarda un post
-add_action( 'save_post', 'snn_purge_cache_on_post_save', 99, 2 );
-add_action( 'delete_post', function( $post_id ) {
-    snn_purge_all_caches( $post_id );
-}, 99 );
-
-// Hook para limpiar cache cuando cambia el estado de un post
-add_action( 'transition_post_status', function( $new_status, $old_status, $post ) {
-    if ( $new_status === 'publish' || $old_status === 'publish' ) {
-        snn_purge_all_caches( $post->ID );
-    }
-}, 99, 3 );
+// NOTA: Estos hooks están desactivados porque el cache de Cached WP Query NO debe limpiarse automáticamente
+// Solo se limpia Varnish para mostrar contenido actualizado, pero el cache de queries persiste
+// Para limpiar el cache de queries, usar el botón "Limpiar Solo Queries" en el admin
+// 
+// Si necesitas reactivar la limpieza automática del cache de queries, descomenta estos hooks:
+// add_action( 'save_post', 'snn_purge_cache_on_post_save', 99, 2 );
+// add_action( 'delete_post', function( $post_id ) {
+//     snn_purge_all_caches( $post_id );
+// }, 99 );
+// add_action( 'transition_post_status', function( $new_status, $old_status, $post ) {
+//     if ( $new_status === 'publish' || $old_status === 'publish' ) {
+//         snn_purge_all_caches( $post->ID );
+//     }
+// }, 99, 3 );
 
