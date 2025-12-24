@@ -74,6 +74,15 @@ class SNN_Assets_Optimization {
         // Optimize third-party scripts
         add_action('wp_enqueue_scripts', array($this, 'optimize_third_party_scripts'), 999);
         
+        // Add GTM noscript after body tag
+        // wp_body_open is available in WordPress 5.2+, fallback to wp_footer if not available
+        if (function_exists('wp_body_open')) {
+            add_action('wp_body_open', array($this, 'add_gtm_noscript'), 1);
+        } else {
+            // Fallback for older WordPress versions: add at the very beginning of footer
+            add_action('wp_footer', array($this, 'add_gtm_noscript'), 1);
+        }
+        
         // Enqueue Alpine.js Intersect plugin for Lazy Rendering
         add_action('wp_enqueue_scripts', array($this, 'enqueue_alpine_intersect'), 5);
     }
@@ -481,7 +490,12 @@ class SNN_Assets_Optimization {
     }
     
     /**
-     * Optimize Google Tag Manager (Hybrid: Interaction + 4s Timeout)
+     * Optimize Google Tag Manager (Core Web Vitals Optimized)
+     * 
+     * Strategy:
+     * 1. Initialize dataLayer immediately (non-blocking, prevents data loss)
+     * 2. Load GTM script with defer attribute (non-blocking, doesn't affect render)
+     * 3. This ensures GTM loads correctly while maintaining Core Web Vitals
      */
     public function optimize_gtm() {
         // Only load if not already loaded
@@ -494,45 +508,44 @@ class SNN_Assets_Optimization {
             return;
         }
         
-        // Hybrid Loading Strategy:
-        // 1. Initialize dataLayer immediately (prevents data loss)
-        // 2. Load script on interaction (scroll, mousemove, touch) OR
-        // 3. Load script automatically after 4 seconds (safety timeout)
-        ?>
-        <script>
-        // 1. Init dataLayer immediately
-        window.dataLayer = window.dataLayer || [];
-        function gtag(){dataLayer.push(arguments);}
+        // Clean GTM ID (remove any spaces or invalid characters)
+        $gtm_id = preg_replace('/[^A-Z0-9-]/', '', strtoupper($gtm_id));
         
-        // 2. Hybrid Loader
-        (function(w,d,s,l,i){
-            var f=d.getElementsByTagName(s)[0],
-            j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';
-            j.async=true;
-            j.src='https://www.googletagmanager.com/gtm.js?id='+i+dl;
-            
-            var loaded = false;
-            
-            function loadGTM() {
-                if (loaded) return;
-                loaded = true;
-                f.parentNode.insertBefore(j,f);
-                // Remove listeners
-                window.removeEventListener('scroll', loadGTM);
-                window.removeEventListener('mousemove', loadGTM);
-                window.removeEventListener('touchstart', loadGTM);
-            }
-            
-            // Load on interaction
-            window.addEventListener('scroll', loadGTM, {passive: true});
-            window.addEventListener('mousemove', loadGTM, {passive: true});
-            window.addEventListener('touchstart', loadGTM, {passive: true});
-            
-            // Safety Timeout (4 seconds)
-            setTimeout(loadGTM, 4000);
-            
+        // Initialize dataLayer immediately (non-blocking, prevents data loss)
+        // This allows GTM to capture events even before the script loads
+        // Using async=true ensures non-blocking load (doesn't affect Core Web Vitals)
+        ?>
+        <!-- Google Tag Manager -->
+        <script>
+        window.dataLayer = window.dataLayer || [];
+        (function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
+        new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
+        j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
+        'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
         })(window,document,'script','dataLayer','<?php echo esc_js($gtm_id); ?>');
         </script>
+        <!-- End Google Tag Manager -->
+        <?php
+    }
+    
+    /**
+     * Add GTM noscript code after body tag
+     * Required for GTM to work when JavaScript is disabled
+     */
+    public function add_gtm_noscript() {
+        $gtm_id = $this->options['gtm_id'] ?? '';
+        if (empty($gtm_id)) {
+            return;
+        }
+        
+        // Clean GTM ID (remove any spaces or invalid characters)
+        $gtm_id = preg_replace('/[^A-Z0-9-]/', '', strtoupper($gtm_id));
+        
+        ?>
+        <!-- Google Tag Manager (noscript) -->
+        <noscript><iframe src="https://www.googletagmanager.com/ns.html?id=<?php echo esc_attr($gtm_id); ?>"
+        height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
+        <!-- End Google Tag Manager (noscript) -->
         <?php
     }
     

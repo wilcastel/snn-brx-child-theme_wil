@@ -9,6 +9,10 @@
  * - Nginx FastCGI Cache
  * - WordPress Transients
  * 
+ * Configuración opcional de Varnish (en wp-config.php):
+ * define( 'VARNISH_HOST', '127.0.0.1' ); // Por defecto: 127.0.0.1
+ * define( 'VARNISH_PORT', 6081 );         // Por defecto: 6081
+ * 
  * @package SNN Theme
  * @since 1.0.0
  */
@@ -172,7 +176,7 @@ function snn_purge_varnish_urls( $urls, $return_details = false ) {
                     } elseif ( $http_code === 404 ) {
                         $error_parts[] = '(No encontrado)';
                     } elseif ( $http_code === 0 ) {
-                        $error_parts[] = '(Sin conexión - Varnish puede no estar corriendo o no ser accesible)';
+                        $error_parts[] = '(Sin conexión - Varnish puede no estar corriendo en ' . $varnish_host . ':' . $varnish_port . ' o no ser accesible)';
                     } else {
                         $error_parts[] = '(Código HTTP inesperado)';
                     }
