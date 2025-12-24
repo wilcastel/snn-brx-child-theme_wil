@@ -58,6 +58,12 @@ class SNN_Assets_Optimization {
         // Resource hints
         add_action('wp_head', array($this, 'add_resource_hints'), 1);
         
+        // Google Tag Manager - MUST be first in <head> (priority 0 = highest)
+        // This ensures GTM loads as early as possible for proper tracking
+        if ($this->options['optimize_third_party'] ?? true) {
+            add_action('wp_head', array($this, 'optimize_gtm'), 0);
+        }
+        
         // WP object safety check (muy temprano, antes de otros scripts)
         add_action('wp_head', array($this, 'add_wp_safety_check'), 0);
         
@@ -71,16 +77,18 @@ class SNN_Assets_Optimization {
         // Also remove on wp_head as a fallback (runs even later, just before output)
         add_action('wp_head', array($this, 'remove_unused_css_head'), 1);
         
-        // Optimize third-party scripts
+        // Optimize other third-party scripts (Facebook Pixel, etc.)
         add_action('wp_enqueue_scripts', array($this, 'optimize_third_party_scripts'), 999);
         
-        // Add GTM noscript after body tag
+        // Add GTM noscript after body tag (only if optimize_third_party is enabled)
         // wp_body_open is available in WordPress 5.2+, fallback to wp_footer if not available
-        if (function_exists('wp_body_open')) {
-            add_action('wp_body_open', array($this, 'add_gtm_noscript'), 1);
-        } else {
-            // Fallback for older WordPress versions: add at the very beginning of footer
-            add_action('wp_footer', array($this, 'add_gtm_noscript'), 1);
+        if ($this->options['optimize_third_party'] ?? true) {
+            if (function_exists('wp_body_open')) {
+                add_action('wp_body_open', array($this, 'add_gtm_noscript'), 1);
+            } else {
+                // Fallback for older WordPress versions: add at the very beginning of footer
+                add_action('wp_footer', array($this, 'add_gtm_noscript'), 1);
+            }
         }
         
         // Enqueue Alpine.js Intersect plugin for Lazy Rendering
@@ -482,9 +490,6 @@ class SNN_Assets_Optimization {
             return;
         }
         
-        // Optimize Google Tag Manager (replaces old Analytics)
-        add_action('wp_head', array($this, 'optimize_gtm'), 1);
-        
         // Optimize Facebook Pixel
         add_action('wp_head', array($this, 'optimize_facebook_pixel'), 1);
     }
@@ -511,19 +516,16 @@ class SNN_Assets_Optimization {
         // Clean GTM ID (remove any spaces or invalid characters)
         $gtm_id = preg_replace('/[^A-Z0-9-]/', '', strtoupper($gtm_id));
         
-        // Initialize dataLayer immediately (non-blocking, prevents data loss)
-        // This allows GTM to capture events even before the script loads
-        // Using async=true ensures non-blocking load (doesn't affect Core Web Vitals)
+        // Use exact Google Tag Manager standard format
+        // This ensures maximum compatibility and proper detection by Google
+        // The script is async by default, so it won't block rendering (Core Web Vitals safe)
         ?>
         <!-- Google Tag Manager -->
-        <script>
-        window.dataLayer = window.dataLayer || [];
-        (function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
+        <script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
         new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
         j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
         'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
-        })(window,document,'script','dataLayer','<?php echo esc_js($gtm_id); ?>');
-        </script>
+        })(window,document,'script','dataLayer','<?php echo esc_js($gtm_id); ?>');</script>
         <!-- End Google Tag Manager -->
         <?php
     }
@@ -533,6 +535,11 @@ class SNN_Assets_Optimization {
      * Required for GTM to work when JavaScript is disabled
      */
     public function add_gtm_noscript() {
+        // Only load if optimize_third_party is enabled
+        if (!($this->options['optimize_third_party'] ?? true)) {
+            return;
+        }
+        
         $gtm_id = $this->options['gtm_id'] ?? '';
         if (empty($gtm_id)) {
             return;
