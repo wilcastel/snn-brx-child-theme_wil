@@ -765,109 +765,79 @@ function bl_maybe_run_cached_query( $results, $query_obj ) {
             }
         }
         
-        // OPTIMIZACIÓN CRÍTICA: Precargar TODOS los datos necesarios de una vez
-        // Esto se hace UNA SOLA VEZ cuando se crea el caché, no cada vez que se renderiza
+        // OPTIMIZACIÓN: Precargar datos necesarios (OPCIONAL - puede desactivarse si causa sobrecarga)
+        // NOTA: Este precache puede ser costoso en CPU/memoria. Se puede desactivar con el filtro.
+        $enable_precache = apply_filters( 'bl_cached_query_enable_precache', true );
         
-        // 1. Precargar términos (categorías, etiquetas, taxonomías personalizadas)
-        // Obtener todos los post types únicos en el caché
-        $post_types_in_cache = [];
-        foreach ( $cached_posts as $cached_post ) {
-            if ( isset( $cached_post->post_type ) ) {
-                $post_types_in_cache[$cached_post->post_type] = true;
-            }
-        }
-        
-        // Precargar términos para cada post type en el caché
-        // Esto es crítico porque diferentes post types pueden tener diferentes taxonomías
-        if ( !empty( $post_ids ) && !empty( $post_types_in_cache ) ) {
-            foreach ( array_keys( $post_types_in_cache ) as $post_type ) {
-                // Obtener todas las taxonomías de este post type (incluyendo personalizadas)
-                $taxonomies_for_type = get_object_taxonomies( $post_type, 'names' );
-                
-                if ( !empty( $taxonomies_for_type ) ) {
-                    // Obtener los IDs de posts de este tipo específico
-                    $post_ids_for_type = [];
-                    foreach ( $cached_posts as $cached_post ) {
-                        if ( isset( $cached_post->post_type ) && $cached_post->post_type === $post_type ) {
-                            $post_ids_for_type[] = $cached_post->ID;
-                        }
-                    }
-                    
-                    if ( !empty( $post_ids_for_type ) && !empty( $taxonomies_for_type ) ) {
-                        // Precargar todos los términos de este post type en el cache de WordPress
-                        // Esto hace una sola query por taxonomía, no una query por post
-                        update_object_term_cache( $post_ids_for_type, $post_type, $taxonomies_for_type );
-                        
-                        // Solo loguear si el plugin WP Performance Auditor está activo
-                        if ( defined('WP_DEBUG') && WP_DEBUG && defined('BL_CACHE_DEBUG') && BL_CACHE_DEBUG && class_exists('WPPA_Cache_Query_Logger') ) {
-                            WPPA_Cache_Query_Logger::log_terms_precache($post_type, count($post_ids_for_type), $taxonomies_for_type);
-                        }
-                    }
-                }
-            }
-        }
-        
-        // 2. Precargar meta fields (incluyendo _thumbnail_id para imágenes destacadas)
-        // Esto evita queries cuando se llama get_post_meta() o get_post_thumbnail_id()
-        if ( !empty( $post_ids ) ) {
-            // Precargar todos los meta fields de todos los posts de una vez
-            // Esto hace una sola query para todos los meta fields, no una query por post
+        if ( $enable_precache && !empty( $post_ids ) ) {
+            // 1. Precargar meta fields básicos (ligero y necesario)
+            // Esto evita queries cuando se llama get_post_meta() o get_post_thumbnail_id()
             update_postmeta_cache( $post_ids );
             
-            // 3. Precargar imágenes destacadas (featured images)
-            // Obtener todos los IDs de imágenes destacadas de una vez usando el cache precargado
-            $thumbnail_ids = [];
-            foreach ( $post_ids as $post_id ) {
-                // get_post_thumbnail_id() ahora usará el cache precargado (sin queries adicionales)
-                $thumbnail_id = get_post_thumbnail_id( $post_id );
-                if ( $thumbnail_id ) {
-                    $thumbnail_ids[] = $thumbnail_id;
-                }
-            }
+            // 2. Precargar términos básicos (solo categorías y tags - más ligero)
+            // Obtener post type principal (asumimos que la mayoría de posts son del mismo tipo)
+            $main_post_type = !empty( $cached_posts ) && isset( $cached_posts[0]->post_type ) ? $cached_posts[0]->post_type : 'post';
+            $basic_taxonomies = [ 'category', 'post_tag' ];
             
-            // Precargar metadata de attachments (imágenes destacadas)
-            if ( !empty( $thumbnail_ids ) ) {
-                // Precargar meta fields de los attachments
-                update_postmeta_cache( $thumbnail_ids );
-                // Precargar los objetos de attachment en memoria
-                _prime_post_caches( $thumbnail_ids, false, true );
-                
-                // OPTIMIZACIÓN CRÍTICA: Precargar wp_get_attachment_metadata() para todas las imágenes
-                // Esto evita queries cuando Bricks llama a wp_get_attachment_image_src()
-                // wp_get_attachment_metadata() se cachea automáticamente en wp_cache, pero necesitamos precargarlo
-                foreach ( $thumbnail_ids as $thumb_id ) {
-                    // Llamar a wp_get_attachment_metadata() para precargarlo en cache
-                    // Esto carga los metadatos de la imagen (tamaños, dimensiones, etc.)
-                    wp_get_attachment_metadata( $thumb_id );
-                }
-                
-                // Solo loguear si el plugin WP Performance Auditor está activo
-                if ( defined('WP_DEBUG') && WP_DEBUG && defined('BL_CACHE_DEBUG') && BL_CACHE_DEBUG && class_exists('WPPA_Cache_Query_Logger') ) {
-                    WPPA_Cache_Query_Logger::log_thumbnails_precache(count($thumbnail_ids));
-                }
-            }
+            // Solo precargar taxonomías básicas para reducir queries
+            update_object_term_cache( $post_ids, $main_post_type, $basic_taxonomies );
             
-            // 4. Precargar autores de los posts (evita queries cuando se llama get_the_author())
-            // NOTA: Solo precargamos objetos de usuario, no meta fields, ya que no se usan en las consultas
-            $author_ids = [];
-            foreach ( $cached_posts as $cached_post ) {
-                if ( isset( $cached_post->post_author ) && $cached_post->post_author ) {
-                    $author_ids[] = (int) $cached_post->post_author;
+            // NOTA: Precache pesado desactivado para reducir consumo:
+            // - Precache de todas las taxonomías personalizadas (demasiado costoso)
+            // - Precache de metadatos de thumbnails (se carga bajo demanda)
+            // - Precache de autores (se carga bajo demanda)
+            // 
+            // Si necesitas el precache completo, activa el filtro:
+            // add_filter( 'bl_cached_query_enable_full_precache', '__return_true' );
+            
+            if ( apply_filters( 'bl_cached_query_enable_full_precache', false ) ) {
+                // Precache completo (solo si se activa explícitamente)
+                // Obtener todos los post types únicos en el caché
+                $post_types_in_cache = [];
+                foreach ( $cached_posts as $cached_post ) {
+                    if ( isset( $cached_post->post_type ) ) {
+                        $post_types_in_cache[$cached_post->post_type] = true;
+                    }
                 }
-            }
-            $author_ids = array_unique( $author_ids );
-            if ( !empty( $author_ids ) ) {
-                // Precargar objetos de usuario en memoria
-                // get_userdata() automáticamente cachea el resultado y es suficiente
-                // No precargamos user meta porque no se usa en las consultas y causaba warnings
+                
+                // Precargar términos para cada post type
+                foreach ( array_keys( $post_types_in_cache ) as $post_type ) {
+                    $taxonomies_for_type = get_object_taxonomies( $post_type, 'names' );
+                    if ( !empty( $taxonomies_for_type ) ) {
+                        $post_ids_for_type = [];
+                        foreach ( $cached_posts as $cached_post ) {
+                            if ( isset( $cached_post->post_type ) && $cached_post->post_type === $post_type ) {
+                                $post_ids_for_type[] = $cached_post->ID;
+                            }
+                        }
+                        if ( !empty( $post_ids_for_type ) ) {
+                            update_object_term_cache( $post_ids_for_type, $post_type, $taxonomies_for_type );
+                        }
+                    }
+                }
+                
+                // Precargar thumbnails y autores (solo si se activa)
+                $thumbnail_ids = [];
+                foreach ( $post_ids as $post_id ) {
+                    $thumbnail_id = get_post_thumbnail_id( $post_id );
+                    if ( $thumbnail_id ) {
+                        $thumbnail_ids[] = $thumbnail_id;
+                    }
+                }
+                if ( !empty( $thumbnail_ids ) ) {
+                    update_postmeta_cache( $thumbnail_ids );
+                    _prime_post_caches( $thumbnail_ids, false, true );
+                }
+                
+                $author_ids = [];
+                foreach ( $cached_posts as $cached_post ) {
+                    if ( isset( $cached_post->post_author ) && $cached_post->post_author ) {
+                        $author_ids[] = (int) $cached_post->post_author;
+                    }
+                }
+                $author_ids = array_unique( $author_ids );
                 foreach ( $author_ids as $user_id ) {
-                    // get_userdata() cachea automáticamente el resultado
                     get_userdata( $user_id );
-                }
-                
-                // Solo loguear si el plugin WP Performance Auditor está activo
-                if ( defined('WP_DEBUG') && WP_DEBUG && defined('BL_CACHE_DEBUG') && BL_CACHE_DEBUG && class_exists('WPPA_Cache_Query_Logger') ) {
-                    WPPA_Cache_Query_Logger::log_authors_precache(count($author_ids));
                 }
             }
         }
@@ -1003,6 +973,9 @@ function bl_setup_cached_post_data( $loop_object, $loop_key, $query_obj ) {
  ******************/
 
 /* Limpiar todos los cachés cuando se guarda un post (publicar o actualizar) */
+// NOTA: El cache de Cached WP Query NO se limpia automáticamente para evitar regeneración constante
+// Solo se limpia Varnish para que muestre contenido actualizado, pero el cache de queries persiste
+// Para limpiar el cache de queries, usar el botón "Limpiar Solo Queries" en el admin
 add_action( 'save_post', 'bl_clear_cached_queries_on_post_save', 10, 2 );
 function bl_clear_cached_queries_on_post_save( $post_id, $post ) {
     // Evitar limpiar en autosaves y revisiones
@@ -1014,23 +987,31 @@ function bl_clear_cached_queries_on_post_save( $post_id, $post ) {
         return;
     }
     
-    // Limpiar nuestro sistema de cache de queries
-    bl_clear_cached_query();
+    // IMPORTANTE: NO limpiar el cache de queries automáticamente
+    // El cache de queries es casi siempre fijo y solo se debe limpiar manualmente
+    // bl_clear_cached_query(); // DESACTIVADO - Solo limpiar manualmente
     
-    // Limpiar otros sistemas de cache (Varnish, Nginx, etc.) usando el helper
-    if ( function_exists( 'snn_purge_all_caches' ) ) {
-        snn_purge_all_caches( $post_id );
+    // Solo limpiar Varnish para que muestre contenido actualizado
+    // El cache de queries en Redis persiste y se reutiliza
+    // NOTA: Warmup desactivado para evitar sobrecarga del servidor
+    if ( function_exists( 'snn_purge_varnish_only' ) ) {
+        snn_purge_varnish_only( $post_id, false ); // false = no hacer warmup automático (desactivado)
+    } elseif ( function_exists( 'snn_purge_all_caches' ) ) {
+        // Fallback: usar función completa pero solo limpiará Varnish si está configurado correctamente
+        // snn_purge_all_caches( $post_id ); // Comentado para evitar limpiar queries
     }
 }
 
 /* Limpiar todos los cachés cuando se elimina un post */
+// NOTA: Similar al save_post, solo limpiamos Varnish, no el cache de queries
 add_action( 'delete_post', 'bl_clear_cached_queries_on_post_delete', 10, 1 );
 function bl_clear_cached_queries_on_post_delete( $post_id ) {
-    bl_clear_cached_query();
+    // IMPORTANTE: NO limpiar el cache de queries automáticamente
+    // bl_clear_cached_query(); // DESACTIVADO - Solo limpiar manualmente
     
-    // Limpiar otros sistemas de cache
-    if ( function_exists( 'snn_purge_all_caches' ) ) {
-        snn_purge_all_caches( $post_id );
+    // Solo limpiar Varnish
+    if ( function_exists( 'snn_purge_varnish_only' ) ) {
+        snn_purge_varnish_only( $post_id, false ); // false = no hacer warmup automático
     }
 }
 
@@ -1050,15 +1031,17 @@ if ( defined('WP_DEBUG') && WP_DEBUG && defined('BL_CACHE_DEBUG') && BL_CACHE_DE
 }
 
 /* Limpiar todos los cachés cuando cambia el estado de un post (publicado, borrador, etc.) */
+// NOTA: Similar a save_post, solo limpiamos Varnish, no el cache de queries
 add_action( 'transition_post_status', 'bl_clear_cached_queries_on_status_change', 10, 3 );
 function bl_clear_cached_queries_on_status_change( $new_status, $old_status, $post ) {
     // Limpiar si cambia a/desde 'publish' para cualquier tipo de post (incluyendo CPTs)
     if ( $new_status === 'publish' || $old_status === 'publish' ) {
-        bl_clear_cached_query();
+        // IMPORTANTE: NO limpiar el cache de queries automáticamente
+        // bl_clear_cached_query(); // DESACTIVADO - Solo limpiar manualmente
         
-        // Limpiar otros sistemas de cache
-        if ( function_exists( 'snn_purge_all_caches' ) ) {
-            snn_purge_all_caches( $post->ID );
+        // Solo limpiar Varnish
+        if ( function_exists( 'snn_purge_varnish_only' ) ) {
+            snn_purge_varnish_only( $post->ID, false ); // false = no hacer warmup automático
         }
     }
 }
