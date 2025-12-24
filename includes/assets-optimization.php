@@ -519,14 +519,40 @@ class SNN_Assets_Optimization {
         // Use exact Google Tag Manager standard format
         // This ensures maximum compatibility and proper detection by Google
         // The script is async by default, so it won't block rendering (Core Web Vitals safe)
+        // Configure for first-party cookies to improve Best Practices score
         ?>
         <!-- Google Tag Manager -->
-        <script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
-        new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
+        <script>
+        window.dataLayer = window.dataLayer || [];
+        // Configure GA4 to use first-party cookies (improves Best Practices score)
+        // This configuration will be picked up by GA4 tags in GTM
+        window.dataLayer.push({
+            'gtm.start': new Date().getTime(),
+            'event': 'gtm.js',
+            // Configure GA4 cookie settings for first-party cookies
+            'cookie_flags': 'SameSite=None;Secure',
+            'cookie_update': true,
+            'cookie_expires': 63072000
+        });
+        (function(w,d,s,l,i){w[l]=w[l]||[];var f=d.getElementsByTagName(s)[0],
         j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
         'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
-        })(window,document,'script','dataLayer','<?php echo esc_js($gtm_id); ?>');</script>
+        })(window,document,'script','dataLayer','<?php echo esc_js($gtm_id); ?>');
+        </script>
         <!-- End Google Tag Manager -->
+        <!-- 
+        NOTA: Para reducir completamente las advertencias de cookies de terceros:
+        
+        En Google Tag Manager, configura tus etiquetas de GA4:
+        1. Ve a tu etiqueta "Google Analytics: GA4 Configuration"
+        2. En "Más configuraciones" > "Campos para configurar"
+        3. Agrega estos campos (si no están ya configurados):
+           - cookie_flags: SameSite=None;Secure
+           - cookie_update: true
+           - cookie_expires: 63072000
+        
+        Esto ayudará a que GA4 use cookies de primera parte cuando sea posible.
+        -->
         <?php
     }
     
