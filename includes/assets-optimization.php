@@ -58,6 +58,12 @@ class SNN_Assets_Optimization {
         // Resource hints
         add_action('wp_head', array($this, 'add_resource_hints'), 1);
         
+        // Google Tag Manager - DESHABILITADO: Ahora se gestiona desde Bricks Settings
+        // Bricks Settings > Settings > Header scripts y Body (header) scripts
+        // if ($this->options['optimize_third_party'] ?? true) {
+        //     add_action('wp_head', array($this, 'optimize_gtm'), 0);
+        // }
+        
         // WP object safety check (muy temprano, antes de otros scripts)
         add_action('wp_head', array($this, 'add_wp_safety_check'), 0);
         
@@ -73,6 +79,17 @@ class SNN_Assets_Optimization {
         
         // Optimize third-party scripts
         add_action('wp_enqueue_scripts', array($this, 'optimize_third_party_scripts'), 999);
+        
+        // GTM noscript - DESHABILITADO: Ahora se gestiona desde Bricks Settings
+        // Bricks Settings > Settings > Body (header) scripts
+        // if ($this->options['optimize_third_party'] ?? true) {
+        //     if (function_exists('wp_body_open')) {
+        //         add_action('wp_body_open', array($this, 'add_gtm_noscript'), 1);
+        //     } else {
+        //         // Fallback for older WordPress versions: add at the very beginning of footer
+        //         add_action('wp_footer', array($this, 'add_gtm_noscript'), 1);
+        //     }
+        // }
         
         // Enqueue Alpine.js Intersect plugin for Lazy Rendering
         add_action('wp_enqueue_scripts', array($this, 'enqueue_alpine_intersect'), 5);
@@ -229,13 +246,14 @@ class SNN_Assets_Optimization {
             'snn_assets_js'
         );
         
-        add_settings_field(
-            'gtm_id',
-            __('Google Tag Manager ID', 'snn'),
-            array($this, 'gtm_id_callback'),
-            'snn-assets-optimization',
-            'snn_assets_js'
-        );
+        // Google Tag Manager ID - DESHABILITADO: Ahora se gestiona desde Bricks Settings
+        // add_settings_field(
+        //     'gtm_id',
+        //     __('Google Tag Manager ID', 'snn'),
+        //     array($this, 'gtm_id_callback'),
+        //     'snn-assets-optimization',
+        //     'snn_assets_js'
+        // );
     }
     
     /**
@@ -260,7 +278,8 @@ class SNN_Assets_Optimization {
         $sanitized['js_minification'] = isset($input['js_minification']) ? (bool) $input['js_minification'] : true;
         $sanitized['remove_console_logs'] = isset($input['remove_console_logs']) ? (bool) $input['remove_console_logs'] : true;
         $sanitized['optimize_third_party'] = isset($input['optimize_third_party']) ? (bool) $input['optimize_third_party'] : true;
-        $sanitized['gtm_id'] = isset($input['gtm_id']) ? sanitize_text_field($input['gtm_id']) : '';
+        // GTM ID - DESHABILITADO: Ahora se gestiona desde Bricks Settings
+        // $sanitized['gtm_id'] = isset($input['gtm_id']) ? sanitize_text_field($input['gtm_id']) : '';
         
         return $sanitized;
     }
@@ -473,16 +492,25 @@ class SNN_Assets_Optimization {
             return;
         }
         
-        // Optimize Google Tag Manager (replaces old Analytics)
-        add_action('wp_head', array($this, 'optimize_gtm'), 1);
+        // Google Tag Manager - DESHABILITADO: Ahora se gestiona desde Bricks Settings
+        // add_action('wp_head', array($this, 'optimize_gtm'), 1);
         
         // Optimize Facebook Pixel
         add_action('wp_head', array($this, 'optimize_facebook_pixel'), 1);
     }
     
     /**
-     * Optimize Google Tag Manager (Hybrid: Interaction + 4s Timeout)
+     * Optimize Google Tag Manager (Core Web Vitals Optimized)
+     * 
+     * DESHABILITADO: Ahora se gestiona desde Bricks Settings
+     * Bricks Settings > Settings > Header scripts
+     * 
+     * Strategy:
+     * 1. Initialize dataLayer immediately (non-blocking, prevents data loss)
+     * 2. Load GTM script with defer attribute (non-blocking, doesn't affect render)
+     * 3. This ensures GTM loads correctly while maintaining Core Web Vitals
      */
+    /* DESHABILITADO: GTM ahora se gestiona desde Bricks Settings
     public function optimize_gtm() {
         // Only load if not already loaded
         if (wp_script_is('google-tag-manager', 'enqueued')) {
@@ -533,8 +561,55 @@ class SNN_Assets_Optimization {
             
         })(window,document,'script','dataLayer','<?php echo esc_js($gtm_id); ?>');
         </script>
+        <!-- End Google Tag Manager -->
+        <!-- 
+        NOTA: Para reducir completamente las advertencias de cookies de terceros:
+        
+        En Google Tag Manager, configura tus etiquetas de GA4:
+        1. Ve a tu etiqueta "Google Analytics: GA4 Configuration"
+        2. En "Más configuraciones" > "Campos para configurar"
+        3. Agrega estos campos (si no están ya configurados):
+           - cookie_flags: SameSite=None;Secure
+           - cookie_update: true
+           - cookie_expires: 63072000
+        
+        Esto ayudará a que GA4 use cookies de primera parte cuando sea posible.
+        -->
         <?php
     }
+    */
+    
+    /**
+     * Add GTM noscript code after body tag
+     * 
+     * DESHABILITADO: Ahora se gestiona desde Bricks Settings
+     * Bricks Settings > Settings > Body (header) scripts
+     * 
+     * Required for GTM to work when JavaScript is disabled
+     */
+    /* DESHABILITADO: GTM ahora se gestiona desde Bricks Settings
+    public function add_gtm_noscript() {
+        // Only load if optimize_third_party is enabled
+        if (!($this->options['optimize_third_party'] ?? true)) {
+            return;
+        }
+        
+        $gtm_id = $this->options['gtm_id'] ?? '';
+        if (empty($gtm_id)) {
+            return;
+        }
+        
+        // Clean GTM ID (remove any spaces or invalid characters)
+        $gtm_id = preg_replace('/[^A-Z0-9-]/', '', strtoupper($gtm_id));
+        
+        ?>
+        <!-- Google Tag Manager (noscript) -->
+        <noscript><iframe src="https://www.googletagmanager.com/ns.html?id=<?php echo esc_attr($gtm_id); ?>"
+        height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
+        <!-- End Google Tag Manager (noscript) -->
+        <?php
+    }
+    */
     
     /**
      * Optimize Facebook Pixel
@@ -874,11 +949,12 @@ class SNN_Assets_Optimization {
         echo '<p class="description">' . __('Optimize third-party scripts like Google Analytics and Facebook Pixel.', 'snn') . '</p>';
     }
 
-    public function gtm_id_callback() {
-        $value = $this->options['gtm_id'] ?? '';
-        echo '<input type="text" name="snn_assets_options[gtm_id]" value="' . esc_attr($value) . '" class="regular-text">';
-        echo '<p class="description">' . __('Enter your Google Tag Manager ID (e.g., GTM-XXXXXX).', 'snn') . '</p>';
-    }
+    // GTM ID Callback - DESHABILITADO: Ahora se gestiona desde Bricks Settings
+    // public function gtm_id_callback() {
+    //     $value = $this->options['gtm_id'] ?? '';
+    //     echo '<input type="text" name="snn_assets_options[gtm_id]" value="' . esc_attr($value) . '" class="regular-text">';
+    //     echo '<p class="description">' . __('Enter your Google Tag Manager ID (e.g., GTM-XXXXXX).', 'snn') . '</p>';
+    // }
 }
 
 // Initialize the class (siempre, pero el constructor maneja cuándo ejecutar código)
