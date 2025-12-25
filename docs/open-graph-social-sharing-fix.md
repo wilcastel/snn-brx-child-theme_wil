@@ -74,30 +74,65 @@ El sistema busca imágenes en este orden:
 ### Paso 3: Probar Compartir
 
 1. **WhatsApp**:
+   - **IMPORTANTE**: WhatsApp no soporta bien WebP para Open Graph
+   - El código ahora convierte automáticamente WebP a JPG/PNG para WhatsApp
    - Abre WhatsApp Web o móvil
    - Comparte la URL del post
    - Verifica que aparezca la imagen, título y descripción
+   - **Si la imagen no aparece**: Verifica que la imagen sea accesible públicamente (no protegida por login)
 
 2. **Facebook Debugger**:
    - Ve a [Facebook Sharing Debugger](https://developers.facebook.com/tools/debug/)
    - Ingresa la URL de tu post
    - Haz clic en "Scrape Again" para actualizar el cache
    - Verifica que aparezcan todos los meta tags correctamente
+   - Verifica que `og:image:secure_url` esté presente (requerido por WhatsApp)
 
 3. **Twitter Card Validator**:
    - Ve a [Twitter Card Validator](https://cards-dev.twitter.com/validator)
    - Ingresa la URL de tu post
    - Verifica que aparezca la preview correctamente
+   - **Nota**: Twitter móvil puede mostrar errores si las meta tags no están correctamente formateadas
 
 ### Paso 4: Solución de Problemas Comunes
 
-#### Problema: La imagen no aparece al compartir
+#### Problema: La imagen no aparece al compartir en WhatsApp
+
+**Causas comunes**:
+1. **WebP no soportado**: WhatsApp no soporta bien WebP para Open Graph
+   - **Solución**: El código ahora convierte automáticamente WebP a JPG/PNG
+   - Verifica que la imagen original (JPG/PNG) exista en el servidor
+
+2. **Falta `og:image:secure_url`**: WhatsApp requiere este meta tag
+   - **Solución**: Ya está implementado en el código
+
+3. **Imagen no accesible**: La imagen debe ser accesible públicamente
+   - Verifica que la URL sea accesible sin autenticación
+   - Prueba abriendo la URL de la imagen directamente en el navegador
+
+4. **Cache de WhatsApp**: WhatsApp cachea las imágenes agresivamente
+   - Usa [Facebook Sharing Debugger](https://developers.facebook.com/tools/debug/) para limpiar el cache
+   - WhatsApp usa el mismo sistema de cache que Facebook
 
 **Soluciones**:
 1. Verifica que la imagen sea **HTTPS** (no HTTP)
 2. Verifica que la URL sea **absoluta** (no relativa)
 3. Verifica que la imagen sea accesible públicamente (no protegida por login)
-4. Usa **Facebook Debugger** para limpiar el cache de Facebook
+4. Verifica que la imagen no sea WebP (el código la convierte automáticamente)
+5. Usa **Facebook Debugger** para limpiar el cache
+
+#### Problema: Twitter móvil muestra error "El término que has introducido no ha obtenido ningún resultado"
+
+**Causas**:
+1. Meta tags de Twitter mal formateados
+2. Descripción muy larga (Twitter tiene límite de 200 caracteres)
+3. URL de imagen no accesible
+
+**Soluciones**:
+1. El código ahora limita la descripción de Twitter a 200 caracteres
+2. Verifica que `twitter:card` esté configurado como `summary_large_image`
+3. Verifica que la imagen de Twitter sea accesible
+4. Usa [Twitter Card Validator](https://cards-dev.twitter.com/validator) para verificar
 
 #### Problema: El título o descripción no aparecen
 
