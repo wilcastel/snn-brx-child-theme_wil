@@ -915,6 +915,7 @@ class SNN_Security_Optimization {
             // Fallback to default image or site logo
             if (empty($image)) {
                 // Use predefined default image for posts
+                // Note: favorit.jpg is already in JPG format, perfect for WhatsApp
                 $default_image = 'https://lanacionweb.com/fotoedicion/2025/08/favorit.jpg';
                 $image = set_url_scheme($default_image, 'https');
                 
@@ -924,6 +925,27 @@ class SNN_Security_Optimization {
                     if ($custom_logo_id) {
                         $image = $this->get_social_image_url($custom_logo_id);
                     }
+                }
+            }
+            
+            // Ensure image is not WebP for WhatsApp compatibility
+            // Convert to original format if it's WebP
+            if (!empty($image) && strpos($image, '.webp') !== false) {
+                if (has_post_thumbnail($post->ID)) {
+                    $image_id = get_post_thumbnail_id($post->ID);
+                    $original_image = $this->convert_webp_to_original($image, $image_id);
+                    if ($original_image && $original_image !== $image) {
+                        $image = $original_image;
+                    }
+                } elseif (preg_match('/wp-image-(\d+)/', $post->post_content ?? '', $id_matches)) {
+                    $image_id = intval($id_matches[1]);
+                    $original_image = $this->convert_webp_to_original($image, $image_id);
+                    if ($original_image && $original_image !== $image) {
+                        $image = $original_image;
+                    }
+                } else {
+                    // For URLs without attachment ID, try to replace .webp with .jpg
+                    $image = str_replace('.webp', '.jpg', $image);
                 }
             }
             
@@ -946,17 +968,33 @@ class SNN_Security_Optimization {
                 echo '<meta property="og:description" content="' . esc_attr($description) . '" />' . "\n";
             }
             if (!empty($image)) {
-                echo '<meta property="og:image" content="' . esc_url($image) . '" />' . "\n";
+                // WhatsApp requires HTTPS and specific image formats
+                // Use original format (JPG/PNG) instead of WebP for better compatibility
+                $og_image_url = $image;
+                
+                // If image is WebP, try to get original format for WhatsApp
+                if (strpos($image, '.webp') !== false && has_post_thumbnail($post->ID)) {
+                    $image_id = get_post_thumbnail_id($post->ID);
+                    $original_url = $this->convert_webp_to_original($image, $image_id);
+                    if ($original_url && $original_url !== $image) {
+                        $og_image_url = $original_url;
+                    }
+                }
+                
+                echo '<meta property="og:image" content="' . esc_url($og_image_url) . '" />' . "\n";
+                
+                // WhatsApp requires og:image:secure_url (HTTPS)
+                echo '<meta property="og:image:secure_url" content="' . esc_url($og_image_url) . '" />' . "\n";
                 
                 // Get actual image dimensions if we have attachment ID
                 $image_dimensions = false;
                 if (has_post_thumbnail($post->ID)) {
                     $image_id = get_post_thumbnail_id($post->ID);
-                    $image_dimensions = $this->get_social_image_dimensions($image_id, $image);
+                    $image_dimensions = $this->get_social_image_dimensions($image_id, $og_image_url);
                 } elseif (preg_match('/wp-image-(\d+)/', $post->post_content ?? '', $id_matches)) {
                     // Try to get dimensions from image in content
                     $image_id = intval($id_matches[1]);
-                    $image_dimensions = $this->get_social_image_dimensions($image_id, $image);
+                    $image_dimensions = $this->get_social_image_dimensions($image_id, $og_image_url);
                 }
                 
                 // Use actual dimensions if available, otherwise use recommended defaults
@@ -970,8 +1008,14 @@ class SNN_Security_Optimization {
                     echo '<meta property="og:image:height" content="630" />' . "\n";
                 }
                 
-                // Add og:image:type for WebP support
-                if (strpos($image, '.webp') !== false) {
+                // Add og:image:type (WhatsApp prefers JPG/PNG over WebP)
+                $image_extension = strtolower(pathinfo(parse_url($og_image_url, PHP_URL_PATH), PATHINFO_EXTENSION));
+                if ($image_extension === 'jpg' || $image_extension === 'jpeg') {
+                    echo '<meta property="og:image:type" content="image/jpeg" />' . "\n";
+                } elseif ($image_extension === 'png') {
+                    echo '<meta property="og:image:type" content="image/png" />' . "\n";
+                } elseif ($image_extension === 'webp') {
+                    // Only if we couldn't convert to original format
                     echo '<meta property="og:image:type" content="image/webp" />' . "\n";
                 }
             }
@@ -980,13 +1024,27 @@ class SNN_Security_Optimization {
             echo '<meta property="og:locale" content="' . esc_attr(get_locale()) . '" />' . "\n";
             
             // Output Twitter Card meta tags
+            // Twitter requires specific format and additional meta tags
             echo '<meta name="twitter:card" content="summary_large_image" />' . "\n";
             echo '<meta name="twitter:title" content="' . esc_attr($title) . '" />' . "\n";
             if (!empty($description)) {
-                echo '<meta name="twitter:description" content="' . esc_attr($description) . '" />' . "\n";
+                // Twitter description should be max 200 characters
+                $twitter_description = mb_substr($description, 0, 200);
+                echo '<meta name="twitter:description" content="' . esc_attr($twitter_description) . '" />' . "\n";
             }
             if (!empty($image)) {
-                echo '<meta name="twitter:image" content="' . esc_url($image) . '" />' . "\n";
+                // Use same image URL as Open Graph (with WebP conversion if needed)
+                $twitter_image_url = $image;
+                if (strpos($image, '.webp') !== false && has_post_thumbnail($post->ID)) {
+                    $image_id = get_post_thumbnail_id($post->ID);
+                    $original_url = $this->convert_webp_to_original($image, $image_id);
+                    if ($original_url && $original_url !== $image) {
+                        $twitter_image_url = $original_url;
+                    }
+                }
+                echo '<meta name="twitter:image" content="' . esc_url($twitter_image_url) . '" />' . "\n";
+                // Twitter also supports alt text
+                echo '<meta name="twitter:image:alt" content="' . esc_attr($title) . '" />' . "\n";
             }
             echo "<!-- /SNN Social Meta Tags -->\n\n";
         } elseif (is_front_page() || is_home()) {
@@ -1013,13 +1071,27 @@ class SNN_Security_Optimization {
                 echo '<meta property="og:description" content="' . esc_attr($description) . '" />' . "\n";
             }
             if (!empty($image)) {
-                echo '<meta property="og:image" content="' . esc_url($image) . '" />' . "\n";
+                // WhatsApp requires HTTPS and specific image formats
+                $og_image_url = $image;
+                
+                // If image is WebP, try to get original format for WhatsApp
+                $custom_logo_id = get_theme_mod('custom_logo');
+                if (strpos($image, '.webp') !== false && $custom_logo_id) {
+                    $original_url = $this->convert_webp_to_original($image, $custom_logo_id);
+                    if ($original_url && $original_url !== $image) {
+                        $og_image_url = $original_url;
+                    }
+                }
+                
+                echo '<meta property="og:image" content="' . esc_url($og_image_url) . '" />' . "\n";
+                
+                // WhatsApp requires og:image:secure_url (HTTPS)
+                echo '<meta property="og:image:secure_url" content="' . esc_url($og_image_url) . '" />' . "\n";
                 
                 // Get actual image dimensions if we have custom logo
                 $image_dimensions = false;
-                $custom_logo_id = get_theme_mod('custom_logo');
                 if ($custom_logo_id) {
-                    $image_dimensions = $this->get_social_image_dimensions($custom_logo_id, $image);
+                    $image_dimensions = $this->get_social_image_dimensions($custom_logo_id, $og_image_url);
                 }
                 
                 // Use actual dimensions if available, otherwise use recommended defaults
@@ -1032,8 +1104,13 @@ class SNN_Security_Optimization {
                     echo '<meta property="og:image:height" content="630" />' . "\n";
                 }
                 
-                // Add og:image:type for WebP support
-                if (strpos($image, '.webp') !== false) {
+                // Add og:image:type (WhatsApp prefers JPG/PNG over WebP)
+                $image_extension = strtolower(pathinfo(parse_url($og_image_url, PHP_URL_PATH), PATHINFO_EXTENSION));
+                if ($image_extension === 'jpg' || $image_extension === 'jpeg') {
+                    echo '<meta property="og:image:type" content="image/jpeg" />' . "\n";
+                } elseif ($image_extension === 'png') {
+                    echo '<meta property="og:image:type" content="image/png" />' . "\n";
+                } elseif ($image_extension === 'webp') {
                     echo '<meta property="og:image:type" content="image/webp" />' . "\n";
                 }
             }
@@ -1041,13 +1118,26 @@ class SNN_Security_Optimization {
             echo '<meta property="og:site_name" content="' . esc_attr($title) . '" />' . "\n";
             echo '<meta property="og:locale" content="' . esc_attr(get_locale()) . '" />' . "\n";
             
+            // Twitter Card meta tags for homepage
             echo '<meta name="twitter:card" content="summary_large_image" />' . "\n";
             echo '<meta name="twitter:title" content="' . esc_attr($title) . '" />' . "\n";
             if (!empty($description)) {
-                echo '<meta name="twitter:description" content="' . esc_attr($description) . '" />' . "\n";
+                // Twitter description should be max 200 characters
+                $twitter_description = mb_substr($description, 0, 200);
+                echo '<meta name="twitter:description" content="' . esc_attr($twitter_description) . '" />' . "\n";
             }
             if (!empty($image)) {
-                echo '<meta name="twitter:image" content="' . esc_url($image) . '" />' . "\n";
+                // Use same image URL as Open Graph (with WebP conversion if needed)
+                $twitter_image_url = $image;
+                $custom_logo_id = get_theme_mod('custom_logo');
+                if (strpos($image, '.webp') !== false && $custom_logo_id) {
+                    $original_url = $this->convert_webp_to_original($image, $custom_logo_id);
+                    if ($original_url && $original_url !== $image) {
+                        $twitter_image_url = $original_url;
+                    }
+                }
+                echo '<meta name="twitter:image" content="' . esc_url($twitter_image_url) . '" />' . "\n";
+                echo '<meta name="twitter:image:alt" content="' . esc_attr($title) . '" />' . "\n";
             }
             echo "<!-- /SNN Social Meta Tags -->\n\n";
         }
@@ -1056,7 +1146,8 @@ class SNN_Security_Optimization {
     /**
      * Get optimized social image URL
      * Returns image URL optimized for social sharing (1200x630px recommended)
-     * Generates a specific size for Open Graph if needed
+     * IMPORTANT: Converts WebP to JPG/PNG for WhatsApp compatibility
+     * WhatsApp does not support WebP well for Open Graph images
      */
     private function get_social_image_url($attachment_id) {
         if (!$attachment_id) {
@@ -1069,7 +1160,9 @@ class SNN_Security_Optimization {
             // Fallback to full size if metadata not available
             $image_url = wp_get_attachment_image_url($attachment_id, 'full');
             if ($image_url) {
-                return set_url_scheme($image_url, 'https');
+                $image_url = set_url_scheme($image_url, 'https');
+                // Convert WebP to original format for WhatsApp compatibility
+                return $this->convert_webp_to_original($image_url, $attachment_id);
             }
             return '';
         }
@@ -1086,19 +1179,17 @@ class SNN_Security_Optimization {
         if ($original_width >= $target_width * 0.9 && $original_width <= $target_width * 1.5) {
             $image_url = wp_get_attachment_image_url($attachment_id, 'full');
             if ($image_url) {
-                return set_url_scheme($image_url, 'https');
+                $image_url = set_url_scheme($image_url, 'https');
+                return $this->convert_webp_to_original($image_url, $attachment_id);
             }
         }
         
         // Try to get the og-image size (1200x630px) - this is registered in register_og_image_size()
         $image_url = wp_get_attachment_image_url($attachment_id, 'og-image');
         if ($image_url) {
-            return set_url_scheme($image_url, 'https');
+            $image_url = set_url_scheme($image_url, 'https');
+            return $this->convert_webp_to_original($image_url, $attachment_id);
         }
-        
-        // If og-image size doesn't exist yet, try to generate it
-        // WordPress will generate it on-the-fly if the size is registered
-        // For now, fall back to large or full size
         
         // Fallback: use large size or full size
         $image_url = wp_get_attachment_image_url($attachment_id, 'large');
@@ -1109,9 +1200,43 @@ class SNN_Security_Optimization {
         // Convert to absolute URL with HTTPS
         if ($image_url) {
             $image_url = set_url_scheme($image_url, 'https');
+            // Convert WebP to original format for WhatsApp compatibility
+            return $this->convert_webp_to_original($image_url, $attachment_id);
         }
         
         return $image_url;
+    }
+    
+    /**
+     * Convert WebP URL to original format (JPG/PNG) for WhatsApp compatibility
+     * WhatsApp does not support WebP well for Open Graph images
+     */
+    private function convert_webp_to_original($image_url, $attachment_id = 0) {
+        // If URL is not WebP, return as is
+        if (strpos($image_url, '.webp') === false) {
+            return $image_url;
+        }
+        
+        // Try to get original file path
+        if ($attachment_id) {
+            $original_file = get_attached_file($attachment_id);
+            if ($original_file && file_exists($original_file)) {
+                // Get original URL
+                $upload_dir = wp_upload_dir();
+                $relative_path = str_replace($upload_dir['basedir'], '', $original_file);
+                $original_url = $upload_dir['baseurl'] . $relative_path;
+                return set_url_scheme($original_url, 'https');
+            }
+        }
+        
+        // Fallback: replace .webp with .jpg or .png
+        // Try .jpg first (most common)
+        $jpg_url = str_replace('.webp', '.jpg', $image_url);
+        // If that doesn't work, try .png
+        $png_url = str_replace('.webp', '.png', $image_url);
+        
+        // Return .jpg by default (most compatible with WhatsApp)
+        return $jpg_url;
     }
     
     /**
