@@ -30,7 +30,18 @@ class SNN_Security_Optimization {
         // Use plugins_loaded with early priority for other security settings
         add_action('plugins_loaded', array($this, 'apply_security_settings'), 1);
         add_action('init', array($this, 'apply_security_settings'));
+        add_action('init', array($this, 'register_og_image_size'));
         add_action('wp_enqueue_scripts', array($this, 'conditional_dashicons'));
+    }
+    
+    /**
+     * Register custom image size for Open Graph (1200x630px)
+     * This ensures we have properly sized images for social sharing
+     */
+    public function register_og_image_size() {
+        // Register Open Graph image size (1200x630px - recommended for Facebook/WhatsApp)
+        // Hard crop to ensure exact dimensions
+        add_image_size('og-image', 1200, 630, true);
     }
     
     /**
@@ -886,20 +897,33 @@ class SNN_Security_Optimization {
             } else {
                 // Try to get first image from content
                 $content = $post->post_content;
-                if (preg_match('/<img[^>]+src=["\']([^"\']+)["\']/', $content, $matches)) {
+                // Try to get attachment ID from image in content
+                if (preg_match('/wp-image-(\d+)/', $content, $id_matches)) {
+                    $image_id = intval($id_matches[1]);
+                    $image = $this->get_social_image_url($image_id);
+                } elseif (preg_match('/<img[^>]+src=["\']([^"\']+)["\']/', $content, $matches)) {
                     $image = esc_url($matches[1]);
                     // Convert to absolute URL if relative
                     if (strpos($image, 'http') !== 0) {
                         $image = home_url($image);
                     }
+                    // Ensure HTTPS
+                    $image = set_url_scheme($image, 'https');
                 }
             }
             
-            // Fallback to site logo or default image
+            // Fallback to default image or site logo
             if (empty($image)) {
-                $custom_logo_id = get_theme_mod('custom_logo');
-                if ($custom_logo_id) {
-                    $image = $this->get_social_image_url($custom_logo_id);
+                // Use predefined default image for posts
+                $default_image = 'https://lanacionweb.com/fotoedicion/2025/08/favorit.jpg';
+                $image = set_url_scheme($default_image, 'https');
+                
+                // If default image doesn't work, fallback to site logo
+                if (empty($image)) {
+                    $custom_logo_id = get_theme_mod('custom_logo');
+                    if ($custom_logo_id) {
+                        $image = $this->get_social_image_url($custom_logo_id);
+                    }
                 }
             }
             
@@ -923,9 +947,33 @@ class SNN_Security_Optimization {
             }
             if (!empty($image)) {
                 echo '<meta property="og:image" content="' . esc_url($image) . '" />' . "\n";
-                // WhatsApp requires specific image dimensions (1200x630px recommended)
-                echo '<meta property="og:image:width" content="1200" />' . "\n";
-                echo '<meta property="og:image:height" content="630" />' . "\n";
+                
+                // Get actual image dimensions if we have attachment ID
+                $image_dimensions = false;
+                if (has_post_thumbnail($post->ID)) {
+                    $image_id = get_post_thumbnail_id($post->ID);
+                    $image_dimensions = $this->get_social_image_dimensions($image_id, $image);
+                } elseif (preg_match('/wp-image-(\d+)/', $post->post_content ?? '', $id_matches)) {
+                    // Try to get dimensions from image in content
+                    $image_id = intval($id_matches[1]);
+                    $image_dimensions = $this->get_social_image_dimensions($image_id, $image);
+                }
+                
+                // Use actual dimensions if available, otherwise use recommended defaults
+                if ($image_dimensions) {
+                    echo '<meta property="og:image:width" content="' . esc_attr($image_dimensions['width']) . '" />' . "\n";
+                    echo '<meta property="og:image:height" content="' . esc_attr($image_dimensions['height']) . '" />' . "\n";
+                } else {
+                    // Fallback: use recommended dimensions (Facebook/WhatsApp will verify actual size)
+                    // This applies to default image (favorit.jpg) and images without metadata
+                    echo '<meta property="og:image:width" content="1200" />' . "\n";
+                    echo '<meta property="og:image:height" content="630" />' . "\n";
+                }
+                
+                // Add og:image:type for WebP support
+                if (strpos($image, '.webp') !== false) {
+                    echo '<meta property="og:image:type" content="image/webp" />' . "\n";
+                }
             }
             echo '<meta property="og:url" content="' . esc_url($url) . '" />' . "\n";
             echo '<meta property="og:site_name" content="' . esc_attr($site_name) . '" />' . "\n";
@@ -966,8 +1014,28 @@ class SNN_Security_Optimization {
             }
             if (!empty($image)) {
                 echo '<meta property="og:image" content="' . esc_url($image) . '" />' . "\n";
-                echo '<meta property="og:image:width" content="1200" />' . "\n";
-                echo '<meta property="og:image:height" content="630" />' . "\n";
+                
+                // Get actual image dimensions if we have custom logo
+                $image_dimensions = false;
+                $custom_logo_id = get_theme_mod('custom_logo');
+                if ($custom_logo_id) {
+                    $image_dimensions = $this->get_social_image_dimensions($custom_logo_id, $image);
+                }
+                
+                // Use actual dimensions if available, otherwise use recommended defaults
+                if ($image_dimensions) {
+                    echo '<meta property="og:image:width" content="' . esc_attr($image_dimensions['width']) . '" />' . "\n";
+                    echo '<meta property="og:image:height" content="' . esc_attr($image_dimensions['height']) . '" />' . "\n";
+                } else {
+                    // Fallback: use recommended dimensions
+                    echo '<meta property="og:image:width" content="1200" />' . "\n";
+                    echo '<meta property="og:image:height" content="630" />' . "\n";
+                }
+                
+                // Add og:image:type for WebP support
+                if (strpos($image, '.webp') !== false) {
+                    echo '<meta property="og:image:type" content="image/webp" />' . "\n";
+                }
             }
             echo '<meta property="og:url" content="' . esc_url($url) . '" />' . "\n";
             echo '<meta property="og:site_name" content="' . esc_attr($title) . '" />' . "\n";
@@ -988,16 +1056,52 @@ class SNN_Security_Optimization {
     /**
      * Get optimized social image URL
      * Returns image URL optimized for social sharing (1200x630px recommended)
+     * Generates a specific size for Open Graph if needed
      */
     private function get_social_image_url($attachment_id) {
         if (!$attachment_id) {
             return '';
         }
         
-        // Try to get a large image (1200px width recommended for Open Graph)
-        $image_url = wp_get_attachment_image_url($attachment_id, 'large');
+        // Get image metadata
+        $image_meta = wp_get_attachment_metadata($attachment_id);
+        if (!$image_meta) {
+            // Fallback to full size if metadata not available
+            $image_url = wp_get_attachment_image_url($attachment_id, 'full');
+            if ($image_url) {
+                return set_url_scheme($image_url, 'https');
+            }
+            return '';
+        }
         
-        // If large size doesn't exist, try full size
+        // Target dimensions for Open Graph (1200x630px)
+        $target_width = 1200;
+        $target_height = 630;
+        
+        // Check if image already has optimal size
+        $original_width = isset($image_meta['width']) ? $image_meta['width'] : 0;
+        $original_height = isset($image_meta['height']) ? $image_meta['height'] : 0;
+        
+        // If image is already close to target size (within 10%), use it
+        if ($original_width >= $target_width * 0.9 && $original_width <= $target_width * 1.5) {
+            $image_url = wp_get_attachment_image_url($attachment_id, 'full');
+            if ($image_url) {
+                return set_url_scheme($image_url, 'https');
+            }
+        }
+        
+        // Try to get the og-image size (1200x630px) - this is registered in register_og_image_size()
+        $image_url = wp_get_attachment_image_url($attachment_id, 'og-image');
+        if ($image_url) {
+            return set_url_scheme($image_url, 'https');
+        }
+        
+        // If og-image size doesn't exist yet, try to generate it
+        // WordPress will generate it on-the-fly if the size is registered
+        // For now, fall back to large or full size
+        
+        // Fallback: use large size or full size
+        $image_url = wp_get_attachment_image_url($attachment_id, 'large');
         if (!$image_url) {
             $image_url = wp_get_attachment_image_url($attachment_id, 'full');
         }
@@ -1008,6 +1112,43 @@ class SNN_Security_Optimization {
         }
         
         return $image_url;
+    }
+    
+    /**
+     * Get actual image dimensions for Open Graph meta tags
+     * Returns array with 'width' and 'height' or false if unavailable
+     */
+    private function get_social_image_dimensions($attachment_id, $image_url = '') {
+        if ($attachment_id) {
+            $image_meta = wp_get_attachment_metadata($attachment_id);
+            if ($image_meta && isset($image_meta['width']) && isset($image_meta['height'])) {
+                // Use actual dimensions if available
+                $width = $image_meta['width'];
+                $height = $image_meta['height'];
+                
+                // If image is very large, scale down to target while maintaining aspect ratio
+                $target_width = 1200;
+                $target_height = 630;
+                
+                if ($width > $target_width || $height > $target_height) {
+                    $ratio = min($target_width / $width, $target_height / $height);
+                    $width = round($width * $ratio);
+                    $height = round($height * $ratio);
+                }
+                
+                return array(
+                    'width' => $width,
+                    'height' => $height
+                );
+            }
+        }
+        
+        // If we can't get dimensions, return recommended defaults
+        // But note: Facebook/WhatsApp will verify actual dimensions when scraping
+        return array(
+            'width' => 1200,
+            'height' => 630
+        );
     }
     
     /**

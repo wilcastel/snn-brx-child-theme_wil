@@ -58,11 +58,11 @@ class SNN_Assets_Optimization {
         // Resource hints
         add_action('wp_head', array($this, 'add_resource_hints'), 1);
         
-        // Google Tag Manager - MUST be first in <head> (priority 0 = highest)
-        // This ensures GTM loads as early as possible for proper tracking
-        if ($this->options['optimize_third_party'] ?? true) {
-            add_action('wp_head', array($this, 'optimize_gtm'), 0);
-        }
+        // Google Tag Manager - DESHABILITADO: Ahora se gestiona desde Bricks Settings
+        // Bricks Settings > Settings > Header scripts y Body (header) scripts
+        // if ($this->options['optimize_third_party'] ?? true) {
+        //     add_action('wp_head', array($this, 'optimize_gtm'), 0);
+        // }
         
         // WP object safety check (muy temprano, antes de otros scripts)
         add_action('wp_head', array($this, 'add_wp_safety_check'), 0);
@@ -77,19 +77,19 @@ class SNN_Assets_Optimization {
         // Also remove on wp_head as a fallback (runs even later, just before output)
         add_action('wp_head', array($this, 'remove_unused_css_head'), 1);
         
-        // Optimize other third-party scripts (Facebook Pixel, etc.)
+        // Optimize third-party scripts
         add_action('wp_enqueue_scripts', array($this, 'optimize_third_party_scripts'), 999);
         
-        // Add GTM noscript after body tag (only if optimize_third_party is enabled)
-        // wp_body_open is available in WordPress 5.2+, fallback to wp_footer if not available
-        if ($this->options['optimize_third_party'] ?? true) {
-            if (function_exists('wp_body_open')) {
-                add_action('wp_body_open', array($this, 'add_gtm_noscript'), 1);
-            } else {
-                // Fallback for older WordPress versions: add at the very beginning of footer
-                add_action('wp_footer', array($this, 'add_gtm_noscript'), 1);
-            }
-        }
+        // GTM noscript - DESHABILITADO: Ahora se gestiona desde Bricks Settings
+        // Bricks Settings > Settings > Body (header) scripts
+        // if ($this->options['optimize_third_party'] ?? true) {
+        //     if (function_exists('wp_body_open')) {
+        //         add_action('wp_body_open', array($this, 'add_gtm_noscript'), 1);
+        //     } else {
+        //         // Fallback for older WordPress versions: add at the very beginning of footer
+        //         add_action('wp_footer', array($this, 'add_gtm_noscript'), 1);
+        //     }
+        // }
         
         // Enqueue Alpine.js Intersect plugin for Lazy Rendering
         add_action('wp_enqueue_scripts', array($this, 'enqueue_alpine_intersect'), 5);
@@ -246,13 +246,14 @@ class SNN_Assets_Optimization {
             'snn_assets_js'
         );
         
-        add_settings_field(
-            'gtm_id',
-            __('Google Tag Manager ID', 'snn'),
-            array($this, 'gtm_id_callback'),
-            'snn-assets-optimization',
-            'snn_assets_js'
-        );
+        // Google Tag Manager ID - DESHABILITADO: Ahora se gestiona desde Bricks Settings
+        // add_settings_field(
+        //     'gtm_id',
+        //     __('Google Tag Manager ID', 'snn'),
+        //     array($this, 'gtm_id_callback'),
+        //     'snn-assets-optimization',
+        //     'snn_assets_js'
+        // );
     }
     
     /**
@@ -277,7 +278,8 @@ class SNN_Assets_Optimization {
         $sanitized['js_minification'] = isset($input['js_minification']) ? (bool) $input['js_minification'] : true;
         $sanitized['remove_console_logs'] = isset($input['remove_console_logs']) ? (bool) $input['remove_console_logs'] : true;
         $sanitized['optimize_third_party'] = isset($input['optimize_third_party']) ? (bool) $input['optimize_third_party'] : true;
-        $sanitized['gtm_id'] = isset($input['gtm_id']) ? sanitize_text_field($input['gtm_id']) : '';
+        // GTM ID - DESHABILITADO: Ahora se gestiona desde Bricks Settings
+        // $sanitized['gtm_id'] = isset($input['gtm_id']) ? sanitize_text_field($input['gtm_id']) : '';
         
         return $sanitized;
     }
@@ -490,6 +492,9 @@ class SNN_Assets_Optimization {
             return;
         }
         
+        // Google Tag Manager - DESHABILITADO: Ahora se gestiona desde Bricks Settings
+        // add_action('wp_head', array($this, 'optimize_gtm'), 1);
+        
         // Optimize Facebook Pixel
         add_action('wp_head', array($this, 'optimize_facebook_pixel'), 1);
     }
@@ -497,11 +502,15 @@ class SNN_Assets_Optimization {
     /**
      * Optimize Google Tag Manager (Core Web Vitals Optimized)
      * 
+     * DESHABILITADO: Ahora se gestiona desde Bricks Settings
+     * Bricks Settings > Settings > Header scripts
+     * 
      * Strategy:
      * 1. Initialize dataLayer immediately (non-blocking, prevents data loss)
      * 2. Load GTM script with defer attribute (non-blocking, doesn't affect render)
      * 3. This ensures GTM loads correctly while maintaining Core Web Vitals
      */
+    /* DESHABILITADO: GTM ahora se gestiona desde Bricks Settings
     public function optimize_gtm() {
         // Only load if not already loaded
         if (wp_script_is('google-tag-manager', 'enqueued')) {
@@ -513,30 +522,43 @@ class SNN_Assets_Optimization {
             return;
         }
         
-        // Clean GTM ID (remove any spaces or invalid characters)
-        $gtm_id = preg_replace('/[^A-Z0-9-]/', '', strtoupper($gtm_id));
-        
-        // Use exact Google Tag Manager standard format
-        // This ensures maximum compatibility and proper detection by Google
-        // The script is async by default, so it won't block rendering (Core Web Vitals safe)
-        // Configure for first-party cookies to improve Best Practices score
+        // Hybrid Loading Strategy:
+        // 1. Initialize dataLayer immediately (prevents data loss)
+        // 2. Load script on interaction (scroll, mousemove, touch) OR
+        // 3. Load script automatically after 4 seconds (safety timeout)
         ?>
-        <!-- Google Tag Manager -->
         <script>
+        // 1. Init dataLayer immediately
         window.dataLayer = window.dataLayer || [];
-        // Configure GA4 to use first-party cookies (improves Best Practices score)
-        // This configuration will be picked up by GA4 tags in GTM
-        window.dataLayer.push({
-            'gtm.start': new Date().getTime(),
-            'event': 'gtm.js',
-            // Configure GA4 cookie settings for first-party cookies
-            'cookie_flags': 'SameSite=None;Secure',
-            'cookie_update': true,
-            'cookie_expires': 63072000
-        });
-        (function(w,d,s,l,i){w[l]=w[l]||[];var f=d.getElementsByTagName(s)[0],
-        j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
-        'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
+        function gtag(){dataLayer.push(arguments);}
+        
+        // 2. Hybrid Loader
+        (function(w,d,s,l,i){
+            var f=d.getElementsByTagName(s)[0],
+            j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';
+            j.async=true;
+            j.src='https://www.googletagmanager.com/gtm.js?id='+i+dl;
+            
+            var loaded = false;
+            
+            function loadGTM() {
+                if (loaded) return;
+                loaded = true;
+                f.parentNode.insertBefore(j,f);
+                // Remove listeners
+                window.removeEventListener('scroll', loadGTM);
+                window.removeEventListener('mousemove', loadGTM);
+                window.removeEventListener('touchstart', loadGTM);
+            }
+            
+            // Load on interaction
+            window.addEventListener('scroll', loadGTM, {passive: true});
+            window.addEventListener('mousemove', loadGTM, {passive: true});
+            window.addEventListener('touchstart', loadGTM, {passive: true});
+            
+            // Safety Timeout (4 seconds)
+            setTimeout(loadGTM, 4000);
+            
         })(window,document,'script','dataLayer','<?php echo esc_js($gtm_id); ?>');
         </script>
         <!-- End Google Tag Manager -->
@@ -555,11 +577,17 @@ class SNN_Assets_Optimization {
         -->
         <?php
     }
+    */
     
     /**
      * Add GTM noscript code after body tag
+     * 
+     * DESHABILITADO: Ahora se gestiona desde Bricks Settings
+     * Bricks Settings > Settings > Body (header) scripts
+     * 
      * Required for GTM to work when JavaScript is disabled
      */
+    /* DESHABILITADO: GTM ahora se gestiona desde Bricks Settings
     public function add_gtm_noscript() {
         // Only load if optimize_third_party is enabled
         if (!($this->options['optimize_third_party'] ?? true)) {
@@ -581,6 +609,7 @@ class SNN_Assets_Optimization {
         <!-- End Google Tag Manager (noscript) -->
         <?php
     }
+    */
     
     /**
      * Optimize Facebook Pixel
@@ -920,11 +949,12 @@ class SNN_Assets_Optimization {
         echo '<p class="description">' . __('Optimize third-party scripts like Google Analytics and Facebook Pixel.', 'snn') . '</p>';
     }
 
-    public function gtm_id_callback() {
-        $value = $this->options['gtm_id'] ?? '';
-        echo '<input type="text" name="snn_assets_options[gtm_id]" value="' . esc_attr($value) . '" class="regular-text">';
-        echo '<p class="description">' . __('Enter your Google Tag Manager ID (e.g., GTM-XXXXXX).', 'snn') . '</p>';
-    }
+    // GTM ID Callback - DESHABILITADO: Ahora se gestiona desde Bricks Settings
+    // public function gtm_id_callback() {
+    //     $value = $this->options['gtm_id'] ?? '';
+    //     echo '<input type="text" name="snn_assets_options[gtm_id]" value="' . esc_attr($value) . '" class="regular-text">';
+    //     echo '<p class="description">' . __('Enter your Google Tag Manager ID (e.g., GTM-XXXXXX).', 'snn') . '</p>';
+    // }
 }
 
 // Initialize the class (siempre, pero el constructor maneja cuándo ejecutar código)
