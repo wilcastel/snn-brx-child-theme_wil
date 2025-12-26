@@ -32,6 +32,7 @@ class SNN_Security_Optimization {
         add_action('init', array($this, 'apply_security_settings'));
         add_action('init', array($this, 'register_og_image_size'));
         add_action('wp_enqueue_scripts', array($this, 'conditional_dashicons'));
+        add_action('wp_footer', array($this, 'fix_bricks_social_sharing_urls'));
     }
     
     /**
@@ -1302,6 +1303,100 @@ class SNN_Security_Optimization {
         if (is_search() || is_404() || is_date() || is_author()) {
             echo '<meta name="robots" content="noindex, follow" />' . "\n";
         }
+    }
+    
+    /**
+     * Fix Bricks Social Sharing widget URLs
+     * Corrects share URLs for WhatsApp, Twitter, and other platforms
+     * Works with the native Bricks Social Sharing widget
+     */
+    public function fix_bricks_social_sharing_urls() {
+        // Only run on single posts/pages
+        if (!is_singular()) {
+            return;
+        }
+        
+        $post_id = get_the_ID();
+        $post_title = get_the_title($post_id);
+        $post_url = get_permalink($post_id);
+        $post_excerpt = has_excerpt($post_id) ? get_the_excerpt($post_id) : wp_trim_words(get_the_content(), 20);
+        
+        // Encode values for JavaScript
+        $encoded_title = esc_js(urlencode($post_title));
+        $encoded_url = esc_js(urlencode($post_url));
+        $encoded_text = esc_js(urlencode($post_title . ' - ' . $post_excerpt));
+        ?>
+        <script>
+        (function() {
+            // Wait for DOM to be ready
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', fixSocialUrls);
+            } else {
+                fixSocialUrls();
+            }
+            
+            function fixSocialUrls() {
+                // Get current page data
+                const pageTitle = decodeURIComponent('<?php echo $encoded_title; ?>');
+                const pageUrl = decodeURIComponent('<?php echo $encoded_url; ?>');
+                const pageText = decodeURIComponent('<?php echo $encoded_text; ?>');
+                
+                // Find all social sharing links in Bricks Social Sharing widget
+                // Bricks uses various selectors, we'll target common ones
+                const socialLinks = document.querySelectorAll(
+                    'a[href*="facebook.com"], ' +
+                    'a[href*="twitter.com"], ' +
+                    'a[href*="x.com"], ' +
+                    'a[href*="wa.me"], ' +
+                    'a[href*="whatsapp.com"], ' +
+                    'a[href*="t.me"], ' +
+                    'a[href*="mailto:"][href*="subject"]'
+                );
+                
+                socialLinks.forEach(function(link) {
+                    const href = link.getAttribute('href');
+                    if (!href) return;
+                    
+                    let newUrl = href;
+                    
+                    // Fix Facebook - use web sharer
+                    if (href.includes('facebook.com/sharer') || href.includes('facebook.com/share')) {
+                        newUrl = 'https://www.facebook.com/sharer/sharer.php?u=' + encodeURIComponent(pageUrl);
+                    }
+                    // Fix Twitter/X - use intent URL (works on mobile and desktop)
+                    else if (href.includes('twitter.com') || href.includes('x.com')) {
+                        // Remove any existing parameters and rebuild
+                        newUrl = 'https://twitter.com/intent/tweet?url=' + encodeURIComponent(pageUrl) + '&text=' + encodeURIComponent(pageTitle);
+                    }
+                    // Fix WhatsApp - use api.whatsapp.com (works on mobile and desktop)
+                    else if (href.includes('wa.me') || href.includes('whatsapp.com')) {
+                        const whatsappText = encodeURIComponent(pageTitle + ' ' + pageUrl);
+                        newUrl = 'https://api.whatsapp.com/send?text=' + whatsappText;
+                    }
+                    // Fix Telegram - use web share
+                    else if (href.includes('t.me')) {
+                        newUrl = 'https://t.me/share/url?url=' + encodeURIComponent(pageUrl) + '&text=' + encodeURIComponent(pageTitle);
+                    }
+                    // Fix Email - ensure proper formatting
+                    else if (href.startsWith('mailto:')) {
+                        const emailSubject = encodeURIComponent(pageTitle);
+                        const emailBody = encodeURIComponent(pageText + '\n\n' + pageUrl);
+                        newUrl = 'mailto:?subject=' + emailSubject + '&body=' + emailBody;
+                    }
+                    
+                    // Update the link if URL changed
+                    if (newUrl !== href) {
+                        link.setAttribute('href', newUrl);
+                        // Also update onclick if present (some widgets use onclick)
+                        if (link.getAttribute('onclick')) {
+                            link.setAttribute('onclick', "window.open('" + newUrl.replace(/'/g, "\\'") + "', '_blank', 'noopener,noreferrer'); return false;");
+                        }
+                    }
+                });
+            }
+        })();
+        </script>
+        <?php
     }
 }
 
