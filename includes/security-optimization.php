@@ -1322,9 +1322,10 @@ class SNN_Security_Optimization {
         $post_excerpt = has_excerpt($post_id) ? get_the_excerpt($post_id) : wp_trim_words(get_the_content(), 20);
         
         // Encode values for JavaScript
-        $encoded_title = esc_js(urlencode($post_title));
-        $encoded_url = esc_js(urlencode($post_url));
-        $encoded_text = esc_js(urlencode($post_title . ' - ' . $post_excerpt));
+        // Use rawurlencode for Twitter compatibility (uses %20 instead of + for spaces)
+        $encoded_title = esc_js(rawurlencode($post_title));
+        $encoded_url = esc_js(rawurlencode($post_url));
+        $encoded_text = esc_js(rawurlencode($post_title . ' - ' . $post_excerpt));
         ?>
         <script>
         (function() {
@@ -1366,6 +1367,8 @@ class SNN_Security_Optimization {
                     // Fix Twitter/X - use intent URL (works on mobile and desktop)
                     else if (href.includes('twitter.com') || href.includes('x.com')) {
                         // Remove any existing parameters and rebuild
+                        // Use encodeURI instead of encodeURIComponent to preserve spaces as %20 instead of +
+                        const encodedTitle = encodeURI(pageTitle).replace(/%20/g, ' ');
                         newUrl = 'https://twitter.com/intent/tweet?url=' + encodeURIComponent(pageUrl) + '&text=' + encodeURIComponent(pageTitle);
                     }
                     // Fix WhatsApp - use api.whatsapp.com (works on mobile and desktop)
