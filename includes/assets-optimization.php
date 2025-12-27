@@ -92,12 +92,16 @@ class SNN_Assets_Optimization {
         // }
         
         // Enqueue Alpine.js Intersect plugin for Lazy Rendering
-        add_action('wp_enqueue_scripts', array($this, 'enqueue_alpine_intersect'), 5);
+        // Priority 25 ensures it loads after Alpine Core (usually enqueued at priority 20)
+        add_action('wp_enqueue_scripts', array($this, 'enqueue_alpine_intersect'), 25);
     }
     
     /**
      * Enqueue Alpine.js Intersect Plugin
      * Required for x-intersect to work in Bricks
+     * 
+     * IMPORTANT: This plugin MUST load AFTER Alpine Core
+     * We use dependency on 'alpinejs' to ensure correct load order
      */
     public function enqueue_alpine_intersect() {
         // Don't load in builder to avoid conflicts
@@ -105,7 +109,7 @@ class SNN_Assets_Optimization {
             return;
         }
 
-        // Alpine Intersect Plugin (Must load BEFORE Alpine Core)
+        // Alpine Intersect Plugin (Must load AFTER Alpine Core)
         // Construir URL dinámicamente usando la URL del sitio
         $upload_dir = wp_upload_dir();
         $alpine_url = $upload_dir['baseurl'] . '/js/ialpine.min.js';
@@ -113,7 +117,7 @@ class SNN_Assets_Optimization {
         wp_enqueue_script(
             'alpine-intersect',
             $alpine_url,
-            array(),
+            array('alpinejs'), // Dependencia: Alpine Core debe cargarse primero
             '3.13.5',
             true // Load in footer (defer se agrega después)
         );
