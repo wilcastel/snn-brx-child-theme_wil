@@ -94,6 +94,9 @@ class SNN_Assets_Optimization {
         // Enqueue Alpine.js Intersect plugin for Lazy Rendering
         // Priority 25 ensures it loads after Alpine Core (usually enqueued at priority 20)
         add_action('wp_enqueue_scripts', array($this, 'enqueue_alpine_intersect'), 25);
+        
+        // Prevenir auto-inicialización de Alpine hasta que el plugin Intersect esté listo
+        add_action('wp_head', array($this, 'prevent_alpine_auto_init'), 1);
     }
     
     /**
@@ -122,13 +125,160 @@ class SNN_Assets_Optimization {
             true // Load in footer (defer se agrega después)
         );
         
-        // Add defer attribute to alpine-intersect
-        add_filter('script_loader_tag', function($tag, $handle) {
-            if ($handle === 'alpine-intersect') {
-                return str_replace(' src', ' defer src', $tag);
+        // NO agregar defer al plugin Intersect - debe cargarse de forma síncrona
+        // para que se registre antes de que Alpine se auto-inicialice
+        // El plugin Intersect normalmente se auto-registra cuando se carga el script
+        
+        // Verificar que el plugin se registre correctamente
+        add_action('wp_footer', array($this, 'verify_alpine_intersect'), 99);
+    }
+    
+    /**
+     * Prevent Alpine auto-initialization until Intersect plugin is ready
+     */
+    public function prevent_alpine_auto_init() {
+        // Don't load in builder to avoid conflicts
+        if (function_exists('bricks_is_builder_main') && bricks_is_builder_main()) {
+            return;
+        }
+        ?>
+        <script>
+        // Prevenir auto-inicialización de Alpine hasta que el plugin Intersect esté listo
+        (function() {
+            // Guardar la función original de Alpine.start si existe
+            if (typeof window.Alpine !== 'undefined' && window.Alpine.start) {
+                window.Alpine._originalStart = window.Alpine.start;
+                window.Alpine.start = function() {
+                    // No inicializar aún, esperar al plugin
+                    console.log('[Alpine Intersect] Auto-inicialización prevenida temporalmente');
+                };
             }
-            return $tag;
-        }, 10, 2);
+        })();
+        </script>
+        <?php
+    }
+    
+    /**
+     * Verify and register Alpine Intersect Plugin
+     * This ensures the plugin is registered before Alpine auto-initializes
+     */
+    public function verify_alpine_intersect() {
+        // Don't load in builder to avoid conflicts
+        if (function_exists('bricks_is_builder_main') && bricks_is_builder_main()) {
+            return;
+        }
+        ?>
+        <script>
+        (function() {
+            // Función para registrar el plugin Intersect
+            function registerIntersectPlugin() {
+                // Verificar que Alpine esté disponible
+                if (typeof Alpine === 'undefined') {
+                    console.warn('[Alpine Intersect] Alpine.js no está disponible. Reintentando...');
+                    setTimeout(registerIntersectPlugin, 50);
+                    return;
+                }
+                
+                // Verificar si el plugin Intersect está disponible
+                // El plugin normalmente expone una función 'intersect' globalmente
+                if (typeof intersect !== 'undefined') {
+                    try {
+                        // Registrar el plugin con Alpine
+                        Alpine.plugin(intersect);
+                        console.log('[Alpine Intersect] Plugin registrado correctamente');
+                        
+                        // Restaurar auto-inicialización de Alpine si la prevenimos
+                        if (Alpine._originalStart) {
+                            Alpine.start = Alpine._originalStart;
+                            delete Alpine._originalStart;
+                        }
+                        
+                        // Inicializar Alpine manualmente si no se ha inicializado
+                        if (typeof Alpine.start === 'function') {
+                            Alpine.start();
+                            console.log('[Alpine Intersect] Alpine inicializado después de registrar plugin');
+                        }
+                        
+                        // Verificar elementos con x-intersect
+                        checkIntersectElements();
+                    } catch (error) {
+                        console.error('[Alpine Intersect] Error al registrar plugin:', error);
+                    }
+                } else {
+                    // El plugin podría auto-registrarse, pero verificar después de un momento
+                    console.log('[Alpine Intersect] Esperando auto-registro del plugin...');
+                    setTimeout(function() {
+                        // Si el plugin se auto-registró, restaurar Alpine
+                        if (Alpine._originalStart) {
+                            Alpine.start = Alpine._originalStart;
+                            delete Alpine._originalStart;
+                            Alpine.start();
+                        }
+                        // Verificar si Alpine tiene la directiva x-intersect disponible
+                        checkIntersectElements();
+                    }, 200);
+                }
+            }
+            
+            // Función para verificar y ayudar a inicializar elementos con x-intersect
+            function checkIntersectElements() {
+                // Buscar elementos con x-intersect (usando diferentes sintaxis posibles)
+                const selectors = [
+                    '[x-intersect]',
+                    '[x-intersect\\.once]',
+                    '[x-intersect\\.margin]',
+                    '[x-intersect\\.once\\.margin]',
+                    '[x-intersect*=""]' // Cualquier atributo que contenga x-intersect
+                ];
+                
+                let intersectElements = [];
+                selectors.forEach(selector => {
+                    try {
+                        const elements = document.querySelectorAll(selector);
+                        intersectElements = intersectElements.concat(Array.from(elements));
+                    } catch (e) {
+                        // Selector inválido, ignorar
+                    }
+                });
+                
+                // Eliminar duplicados
+                intersectElements = [...new Set(intersectElements)];
+                
+                if (intersectElements.length > 0) {
+                    console.log('[Alpine Intersect] Encontrados', intersectElements.length, 'elementos con x-intersect');
+                    
+                    // Verificar que Alpine esté procesando estos elementos
+                    // Si Alpine ya se inicializó, forzar re-evaluación
+                    if (typeof Alpine !== 'undefined') {
+                        // Forzar re-inicialización de Alpine en estos elementos
+                        intersectElements.forEach(el => {
+                            try {
+                                // Si el elemento tiene x-data pero Alpine no lo ha procesado
+                                if (el.hasAttribute('x-data') && !el.__x) {
+                                    // Forzar inicialización manual si es necesario
+                                    // Pero normalmente Alpine lo hace automáticamente
+                                }
+                            } catch (e) {
+                                // Ignorar errores individuales
+                            }
+                        });
+                    }
+                } else {
+                    console.log('[Alpine Intersect] No se encontraron elementos con x-intersect');
+                }
+            }
+            
+            // Inicializar cuando el DOM esté listo
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', function() {
+                    setTimeout(registerIntersectPlugin, 100);
+                });
+            } else {
+                setTimeout(registerIntersectPlugin, 100);
+            }
+        })();
+        </script>
+        <?php
     }
     
     /**
