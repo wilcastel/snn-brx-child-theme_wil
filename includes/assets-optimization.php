@@ -70,6 +70,10 @@ class SNN_Assets_Optimization {
         // Defer non-critical JavaScript
         add_filter('script_loader_tag', array($this, 'defer_non_critical_js'), 10, 2);
         
+        // Remove defer from Alpine Intersect plugin (must run AFTER defer_non_critical_js)
+        // Priority 999 ensures it runs last and removes defer even if other filters added it
+        add_filter('script_loader_tag', array($this, 'remove_defer_from_alpine_intersect'), 999, 2);
+        
         // Remove unused CSS
         // Priority 99999 to ensure it runs AFTER Jetpack and other plugins that enqueue wp-block-library
         add_action('wp_enqueue_scripts', array($this, 'remove_unused_css'), 99999);
@@ -113,8 +117,8 @@ class SNN_Assets_Optimization {
             return;
         }
         
-        // Only register if not already registered
-        if (wp_script_is('alpinejs', 'registered')) {
+        // Only register if not already registered or enqueued
+        if (wp_script_is('alpinejs', 'registered') || wp_script_is('alpinejs', 'enqueued')) {
             return;
         }
         
@@ -171,9 +175,7 @@ class SNN_Assets_Optimization {
         // NO agregar defer al plugin Intersect - debe cargarse de forma síncrona
         // para que se registre antes de que Alpine se auto-inicialice
         // El plugin Intersect normalmente se auto-registra cuando se carga el script
-        
-        // Asegurar que el plugin Intersect no tenga defer agregado por otros filtros
-        add_filter('script_loader_tag', array($this, 'remove_defer_from_alpine_intersect'), 10, 2);
+        // El filtro para remover defer se registra en el constructor con prioridad 999
         
         // Verificar que el plugin se registre correctamente
         add_action('wp_footer', array($this, 'verify_alpine_intersect'), 99);
@@ -182,13 +184,26 @@ class SNN_Assets_Optimization {
     /**
      * Remove defer attribute from Alpine Intersect plugin
      * This ensures it loads synchronously and registers before Alpine auto-initializes
+     * 
+     * IMPORTANT: This filter must run AFTER defer_non_critical_js (priority 10)
+     * so we use priority 999 to ensure it runs last
      */
     public function remove_defer_from_alpine_intersect($tag, $handle) {
         if ($handle === 'alpine-intersect') {
-            // Remove defer attribute if present
-            $tag = str_replace(' defer', '', $tag);
-            $tag = str_replace(" defer='defer'", '', $tag);
-            $tag = str_replace(' defer="defer"', '', $tag);
+            // Remove defer attribute if present (multiple variations)
+            // Using more robust regex patterns to catch all variations
+            $tag = preg_replace('/\s+defer(?=\s|>|"|\'|=)/i', '', $tag);
+            $tag = preg_replace('/\s+defer=\'defer\'/i', '', $tag);
+            $tag = preg_replace('/\s+defer="defer"/i', '', $tag);
+            $tag = preg_replace('/\s+defer=\'[^\']*\'/i', '', $tag);
+            $tag = preg_replace('/\s+defer="[^"]*"/i', '', $tag);
+            
+            // Also ensure it doesn't have async (which would also cause issues)
+            $tag = preg_replace('/\s+async(?=\s|>|"|\'|=)/i', '', $tag);
+            $tag = preg_replace('/\s+async=\'async\'/i', '', $tag);
+            $tag = preg_replace('/\s+async="async"/i', '', $tag);
+            $tag = preg_replace('/\s+async=\'[^\']*\'/i', '', $tag);
+            $tag = preg_replace('/\s+async="[^"]*"/i', '', $tag);
         }
         return $tag;
     }
@@ -205,14 +220,45 @@ class SNN_Assets_Optimization {
         <script>
         // Prevenir auto-inicialización de Alpine hasta que el plugin Intersect esté listo
         (function() {
-            // Guardar la función original de Alpine.start si existe
-            if (typeof window.Alpine !== 'undefined' && window.Alpine.start) {
-                window.Alpine._originalStart = window.Alpine.start;
-                window.Alpine.start = function() {
-                    // No inicializar aún, esperar al plugin
-                    console.log('[Alpine Intersect] Auto-inicialización prevenida temporalmente');
-                };
+            // Función para prevenir auto-inicialización
+            function preventAutoInit() {
+                // Guardar la función original de Alpine.start si existe
+                if (typeof window.Alpine !== 'undefined' && window.Alpine.start) {
+                    // Solo prevenir si no lo hemos hecho ya
+                    if (!window.Alpine._originalStart) {
+                        window.Alpine._originalStart = window.Alpine.start;
+                        window.Alpine.start = function() {
+                            // No inicializar aún, esperar al plugin
+                            console.log('[Alpine Intersect] Auto-inicialización prevenida temporalmente');
+                        };
+                    }
+                } else {
+                    // Si Alpine aún no está disponible (porque tiene defer), reintentar
+                    setTimeout(preventAutoInit, 50);
+                }
             }
+            
+            // Intentar prevenir inmediatamente
+            preventAutoInit();
+            
+            // También escuchar cuando Alpine se carga (por si tiene defer)
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', preventAutoInit);
+            }
+            
+            // También verificar periódicamente hasta que Alpine esté disponible
+            let attempts = 0;
+            const maxAttempts = 100; // 5 segundos máximo (50ms * 100)
+            const checkInterval = setInterval(function() {
+                attempts++;
+                if (typeof window.Alpine !== 'undefined' && window.Alpine.start) {
+                    preventAutoInit();
+                    clearInterval(checkInterval);
+                } else if (attempts >= maxAttempts) {
+                    clearInterval(checkInterval);
+                    console.warn('[Alpine Intersect] No se pudo prevenir auto-inicialización: Alpine no está disponible');
+                }
+            }, 50);
         })();
         </script>
         <?php
