@@ -91,12 +91,50 @@ class SNN_Assets_Optimization {
         //     }
         // }
         
+        // Enqueue Alpine.js Core first (if not already registered)
+        // Priority 20 ensures it loads before the Intersect plugin
+        add_action('wp_enqueue_scripts', array($this, 'enqueue_alpine_core'), 20);
+        
         // Enqueue Alpine.js Intersect plugin for Lazy Rendering
-        // Priority 25 ensures it loads after Alpine Core (usually enqueued at priority 20)
+        // Priority 25 ensures it loads after Alpine Core
         add_action('wp_enqueue_scripts', array($this, 'enqueue_alpine_intersect'), 25);
         
         // Prevenir auto-inicialización de Alpine hasta que el plugin Intersect esté listo
         add_action('wp_head', array($this, 'prevent_alpine_auto_init'), 1);
+    }
+    
+    /**
+     * Enqueue Alpine.js Core
+     * This ensures Alpine Core is registered before the Intersect plugin
+     */
+    public function enqueue_alpine_core() {
+        // Don't load in builder to avoid conflicts
+        if (function_exists('bricks_is_builder_main') && bricks_is_builder_main()) {
+            return;
+        }
+        
+        // Only register if not already registered
+        if (wp_script_is('alpinejs', 'registered')) {
+            return;
+        }
+        
+        // Register Alpine.js Core
+        // URL from CDN or local file
+        $alpine_core_url = 'https://lanaciondeportes.com/fotoedicion/js/alpine.js';
+        
+        wp_register_script(
+            'alpinejs',
+            $alpine_core_url,
+            array(), // No dependencies
+            '3.12.0',
+            true // Load in footer
+        );
+        
+        // Add defer attribute to Alpine Core
+        wp_script_add_data('alpinejs', 'defer', true);
+        
+        // Enqueue Alpine Core
+        wp_enqueue_script('alpinejs');
     }
     
     /**
@@ -112,6 +150,11 @@ class SNN_Assets_Optimization {
             return;
         }
 
+        // Ensure Alpine Core is registered first
+        if (!wp_script_is('alpinejs', 'registered')) {
+            $this->enqueue_alpine_core();
+        }
+
         // Alpine Intersect Plugin (Must load AFTER Alpine Core)
         // Construir URL dinámicamente usando la URL del sitio
         $upload_dir = wp_upload_dir();
@@ -122,15 +165,32 @@ class SNN_Assets_Optimization {
             $alpine_url,
             array('alpinejs'), // Dependencia: Alpine Core debe cargarse primero
             '3.13.5',
-            true // Load in footer (defer se agrega después)
+            true // Load in footer
         );
         
         // NO agregar defer al plugin Intersect - debe cargarse de forma síncrona
         // para que se registre antes de que Alpine se auto-inicialice
         // El plugin Intersect normalmente se auto-registra cuando se carga el script
         
+        // Asegurar que el plugin Intersect no tenga defer agregado por otros filtros
+        add_filter('script_loader_tag', array($this, 'remove_defer_from_alpine_intersect'), 10, 2);
+        
         // Verificar que el plugin se registre correctamente
         add_action('wp_footer', array($this, 'verify_alpine_intersect'), 99);
+    }
+    
+    /**
+     * Remove defer attribute from Alpine Intersect plugin
+     * This ensures it loads synchronously and registers before Alpine auto-initializes
+     */
+    public function remove_defer_from_alpine_intersect($tag, $handle) {
+        if ($handle === 'alpine-intersect') {
+            // Remove defer attribute if present
+            $tag = str_replace(' defer', '', $tag);
+            $tag = str_replace(" defer='defer'", '', $tag);
+            $tag = str_replace(' defer="defer"', '', $tag);
+        }
+        return $tag;
     }
     
     /**
@@ -593,7 +653,8 @@ class SNN_Assets_Optimization {
             'jquery-migrate',
             'bricks-frontend',
             'snn-webp-optimization',
-            'snn-assets-optimization'
+            'snn-assets-optimization',
+            'alpine-intersect' // Must load synchronously to register before Alpine auto-initializes
         );
         
         if (in_array($handle, $critical_scripts)) {
